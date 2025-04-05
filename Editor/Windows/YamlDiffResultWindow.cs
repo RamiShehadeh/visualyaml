@@ -104,17 +104,15 @@ public class YamlDiffResultWindow : EditorWindow
                 asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
             }
 
-            // Prepare the text that will appear on the button.
             string buttonText = $"{fieldLabel}: {assetName}";
             GUIStyle linkStyle = new GUIStyle(EditorStyles.linkLabel)
             {
-                // Optionally, adjust the style: for instance, underline on hover.
                 alignment = TextAnchor.MiddleLeft
             };
 
             // Reserve a rect for the button.
             Rect rect = GUILayoutUtility.GetRect(new GUIContent(buttonText), linkStyle);
-            // Draw the button.
+
             if (GUI.Button(rect, buttonText, linkStyle))
             {
                 if (asset != null)

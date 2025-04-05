@@ -23,7 +23,6 @@ public static class YamlDiffer
         List<YamlDocumentInfo> newDocs = ExtractYamlDocuments(yamlNew);
 
         // Match documents by fileId.
-        // For each document in the old version...
         foreach (var oldDoc in oldDocs)
         {
             // Try to find a matching document in the new version.
@@ -272,7 +271,6 @@ public static class YamlDiffer
                 if (guidMatch.Success)
                 {
                     string guid = guidMatch.Groups[1].Value;
-                    Debug.Log("found GUID " + guid);
                     string assetPath = AssetDatabase.GUIDToAssetPath(guid);
                     if (!string.IsNullOrEmpty(assetPath))
                     {
