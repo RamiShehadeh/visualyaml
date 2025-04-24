@@ -2,7 +2,7 @@
 
 A Unity Editor extension that makes it easy to visualize differences between YAML-serialized Unity assets (such as prefabs). The tool compares two versions of YAML files and highlights changes in a user-friendly interface, including clickable asset references.
 
-![image](https://github.com/user-attachments/assets/9088e897-5b68-4a4d-b50b-f6d968aa3f20)
+![image](https://i.ibb.co/6cnccfk8/yaml.png)
 
 
 ## Features
