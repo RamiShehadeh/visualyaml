@@ -17,15 +17,35 @@ namespace YamlPrefabDiff
 
     internal class DiffTreeView : TreeView
     {
-        private readonly AssetDiffEntry _entry;
         private readonly GUIStyle _badgeStyle;
+        private readonly GUIStyle _inlineStyle;
+        private const float BadgePadding = 10f;
+        private const float MinInlineWidth = 520f; // don't render inline diff on tiny rows
+        private static readonly Color Added = new Color(0.24f, 0.80f, 0.42f);    // #3CCB6B
+        private static readonly Color Modified = new Color(0.90f, 0.76f, 0.31f); // #E6C14F
+        private static readonly Color Removed = new Color(0.88f, 0.35f, 0.31f);  // #E05A4F
+        private readonly AssetDiffEntry _entry;
 
         public DiffTreeView(TreeViewState state, AssetDiffEntry entry) : base(state)
         {
             _entry = entry;
             showAlternatingRowBackgrounds = true;
             rowHeight = 20f;
-            _badgeStyle = new GUIStyle(EditorStyles.miniBoldLabel) { alignment = TextAnchor.MiddleRight };
+
+            _badgeStyle = new GUIStyle(EditorStyles.miniBoldLabel)
+            {
+                alignment = TextAnchor.MiddleRight,
+                clipping = TextClipping.Clip,
+                richText = false
+            };
+            _inlineStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                clipping = TextClipping.Clip,
+                richText = true,
+                wordWrap = false
+            };
+
             Reload();
         }
 
@@ -97,28 +117,72 @@ namespace YamlPrefabDiff
 
         protected override void RowGUI(RowGUIArgs args)
         {
-            base.RowGUI(args); // draws label & indentation
-
+            // Left color strip based on change type (for leaf rows only)
             var item = (DiffTreeItem)args.item;
-            var rect = args.rowRect;
-
-            // Right badge
-            if (!string.IsNullOrEmpty(item.ChangeBadge))
-            {
-                var r = rect; r.xMin = r.xMax - 150f;
-                EditorGUI.LabelField(r, item.ChangeBadge, _badgeStyle);
-            }
-
-            // If leaf, draw inline “old → new” to the right of the label
             if (item.IsLeaf && item.FieldChange != null)
             {
-                var ch = item.FieldChange;
-                var textRect = rect; textRect.xMin = Mathf.Max(textRect.xMin + GetContentIndent(item) + 260f, 260f);
-
-                var s = InlineDiffText(ch);
-                var style = new GUIStyle(EditorStyles.miniLabel) { richText = true, wordWrap = false };
-                EditorGUI.LabelField(textRect, s, style);
+                var strip = args.rowRect; strip.width = 3f;
+                EditorGUI.DrawRect(strip, RowColor(item.FieldChange.ChangeType));
             }
+
+            // Draw default label first (respects indentation)
+            base.RowGUI(args);
+
+            // Compute rectangles: [label ...] [inlineDiff ...] [badge  ]
+            var row = args.rowRect;
+            float indent = GetContentIndent(item);
+            float labelEnd = indent + 260f; // roughly where our field path label ends
+            float badgeWidth = CalcBadgeWidth(item.ChangeBadge);
+            var badgeRect = new Rect(row.xMax - (badgeWidth + BadgePadding), row.y, badgeWidth, row.height);
+
+            // Inline area gets what's between labelEnd and badgeRect.x
+            var inlineRect = new Rect(row.x + labelEnd, row.y, Mathf.Max(0, badgeRect.x - (row.x + labelEnd) - 6f), row.height);
+
+            // Only draw inline when there's enough width and it's a leaf
+            if (item.IsLeaf && inlineRect.width > 60f && row.width >= MinInlineWidth)
+            {
+                var inline = InlineDiffText(item.FieldChange);
+                EditorGUI.LabelField(inlineRect, inline, _inlineStyle);
+            }
+
+            // Badge (always)
+            if (!string.IsNullOrEmpty(item.ChangeBadge))
+                EditorGUI.LabelField(badgeRect, item.ChangeBadge, _badgeStyle);
+        }
+
+        private static float CalcBadgeWidth(string badge)
+        {
+            if (string.IsNullOrEmpty(badge)) return 0f;
+            return GUI.skin.label.CalcSize(new GUIContent(badge)).x + 8f;
+        }
+
+        private static Color RowColor(string ct)
+        {
+            switch (ct)
+            {
+                case "added": return Added;
+                case "removed": return Removed;
+                default: return Modified;
+            }
+        }
+
+        private static string InlineDiffText(DiffResult d)
+        {
+            // short, single-line preview; GUIDs are already prettified
+            string Limit(string s)
+            {
+                if (string.IsNullOrEmpty(s)) return "";
+                var nl = s.IndexOf('\n'); if (nl >= 0) s = s[..nl];
+                if (s.Length > 120) s = s[..117] + "…";
+                return s;
+            }
+
+            return d.ChangeType switch
+            {
+                "added" => $"<b>new:</b> {Limit(d.NewValue)}",
+                "removed" => $"<b>old:</b> {Limit(d.OldValue)}",
+                _ => $"{Limit(d.OldValue)} <b>→</b> {Limit(d.NewValue)}"
+            };
         }
 
         // ------------ helpers -------------
@@ -135,14 +199,14 @@ namespace YamlPrefabDiff
                 }
             }
             if (add && !rem && !mod) return ("+ added", "added");
-            if (!add && rem && !mod) return ("− removed", "removed");
-            if (!add && !rem && mod) return ("⟲ modified", "modified");
+            if (!add && rem && !mod) return ("- removed", "removed");
+            if (!add && !rem && mod) return ("~ modified", "modified");
             return ($"{diffs.Count} changes", "mixed");
         }
 
         private static string BadgeFor(string ct) =>
             ct == "added" ? "+ added" :
-            ct == "removed" ? "− removed" : "⟲ modified";
+            ct == "removed" ? "− removed" : "~ modified";
 
         private static string PrettyFieldPath(string raw, string componentType)
         {
@@ -156,19 +220,6 @@ namespace YamlPrefabDiff
             // drop leading slash
             if (raw.StartsWith("/")) raw = raw.Substring(1);
             return raw;
-        }
-
-        private static string InlineDiffText(DiffResult d)
-        {
-            switch (d.ChangeType)
-            {
-                case "added":
-                    return $"<b>new:</b> {Limit(d.NewValue)}";
-                case "removed":
-                    return $"<b>old:</b> {Limit(d.OldValue)}";
-                default:
-                    return $"{Limit(d.OldValue)} <b>→</b> {Limit(d.NewValue)}";
-            }
         }
 
         private static string Limit(string s)

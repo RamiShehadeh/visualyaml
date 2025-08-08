@@ -22,6 +22,7 @@ namespace YamlPrefabDiff
         private void OnEnable()
         {
             _treeState ??= new TreeViewState();
+            minSize = new Vector2(820, 520);
         }
 
         private void OnGUI()
