@@ -232,7 +232,6 @@ namespace YamlPrefabDiff
 
         private static void BuildPath(PrefabNode node, PrefabGraph graph, List<string> acc)
         {
-            // ascend by searching parent (TransformToNode is one-way, so do a slow search; graphs are small per file)
             PrefabNode parent = null;
             foreach (var n in graph.TransformToNode.Values)
             {
@@ -265,7 +264,6 @@ namespace YamlPrefabDiff
             if (string.IsNullOrEmpty(v)) return v;
             // keep short scalars short
             if (v.IndexOf('\n') < 0 && v.Length <= 120) return v;
-            // trim excessive whitespace
             return v.Trim();
         }
     }

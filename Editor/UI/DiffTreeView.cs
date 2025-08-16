@@ -1,5 +1,4 @@
-﻿// Assets/Packages/YamlPrefabDiff/Editor/UI/DiffTreeView.cs
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
@@ -10,8 +9,8 @@ namespace YamlPrefabDiff
 {
     internal class DiffTreeItem : TreeViewItem
     {
-        public DiffResult FieldChange;         // non-null only for leaf rows (a single field)
-        public string ChangeBadge;             // “+ added”, “− removed”, “⟲ modified”, or “<n> changes”
+        public DiffResult FieldChange;
+        public string ChangeBadge;             // “+ added”, “− removed”, “~ modified”, or “<n> changes”
         public bool IsLeaf => FieldChange != null;
     }
 
@@ -72,9 +71,8 @@ namespace YamlPrefabDiff
             foreach (var goKey in goKeys)
             {
                 var goItem = new DiffTreeItem { id = id++, depth = 0, displayName = string.IsNullOrEmpty(goKey) ? "(Unresolved GameObject)" : goKey };
-                root.AddChild(goItem); // <-- add ONCE
+                root.AddChild(goItem);
 
-                // 2) group by component type under this GO
                 var byComp = perGo[goKey]
                     .GroupBy(d => string.IsNullOrEmpty(d.ComponentType) ? "(Unknown)" : d.ComponentType)
                     .OrderBy(g => g.Key);
@@ -93,7 +91,6 @@ namespace YamlPrefabDiff
                     };
                     goItem.AddChild(compItem);
 
-                    // 3) leaf per field change
                     foreach (var ch in compChanges.OrderBy(c => c.FieldPath))
                     {
                         compItem.AddChild(new DiffTreeItem
@@ -128,14 +125,13 @@ namespace YamlPrefabDiff
             // Draw default label first (respects indentation)
             base.RowGUI(args);
 
-            // Compute rectangles: [label ...] [inlineDiff ...] [badge  ]
+            // Compute rectangles
             var row = args.rowRect;
             float indent = GetContentIndent(item);
-            float labelEnd = indent + 260f; // roughly where our field path label ends
+            float labelEnd = indent + 260f; // roughly where field path label ends
             float badgeWidth = CalcBadgeWidth(item.ChangeBadge);
             var badgeRect = new Rect(row.xMax - (badgeWidth + BadgePadding), row.y, badgeWidth, row.height);
 
-            // Inline area gets what's between labelEnd and badgeRect.x
             var inlineRect = new Rect(row.x + labelEnd, row.y, Mathf.Max(0, badgeRect.x - (row.x + labelEnd) - 6f), row.height);
 
             // Only draw inline when there's enough width and it's a leaf
@@ -168,7 +164,7 @@ namespace YamlPrefabDiff
 
         private static string InlineDiffText(DiffResult d)
         {
-            // short, single-line preview; GUIDs are already prettified
+            // short, single line preview
             string Limit(string s)
             {
                 if (string.IsNullOrEmpty(s)) return "";
@@ -185,7 +181,7 @@ namespace YamlPrefabDiff
             };
         }
 
-        // ------------ helpers -------------
+        // helpers
         private static (string badge, string type) Summarize(List<DiffResult> diffs)
         {
             bool add = false, rem = false, mod = false;

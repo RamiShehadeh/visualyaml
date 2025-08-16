@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
-using YamlDotNet.RepresentationModel; // default backend
+using YamlDotNet.RepresentationModel;
 
 namespace YamlPrefabDiff
 {
@@ -108,6 +108,7 @@ namespace YamlPrefabDiff
 
         private static string TryResolveMonoScriptName(string text)
         {
+            // TODO: Fix
             // Prefer m_Name if non-empty; else resolve m_Script guid
             var nameRx = new Regex(@"\bm_Name:\s*(\S+)");
             var m = nameRx.Match(text);

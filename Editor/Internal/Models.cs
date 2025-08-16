@@ -10,14 +10,14 @@ public class AssetDiffEntry
     public string AssetPath;    // e.g. Assets/Prefabs/My.prefab or "Manual Diff: A vs B"
     public string ChangeType;   // Added | Modified | Deleted | Manual
     public List<DiffResult> DiffResults = new();
-    public PrefabGraph OldGraph; // optional, when available
-    public PrefabGraph NewGraph; // optional, when available
+    public PrefabGraph OldGraph; 
+    public PrefabGraph NewGraph; 
 }
 
 [Serializable]
 public class DiffResult
 {
-    public string ComponentType;     // e.g. Transform, MeshRenderer, MyMono
+    public string ComponentType;     // e.g. Transform, MeshRenderer
     public string FieldPath;         // YAML field path within the component
     public string HierarchyPath;     // GameObject hierarchy + component label
     public string ChangeType;        // added | removed | modified
@@ -63,9 +63,8 @@ public class ComponentInfo
 {
     public long FileId;
     public int ClassId; // Unity YAML class id (e.g. 114 = MonoBehaviour)
-    public string TypeName; // e.g. Transform, MeshRenderer, MyMono
+    public string TypeName; // e.g. Transform, MeshRenderer
     public long OwnerGameObjectFileId; // back-reference
 }
-
 
 #endif
