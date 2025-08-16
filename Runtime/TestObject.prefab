@@ -14,7 +14,7 @@ GameObject:
   - component: {fileID: 756258314375569970}
   - component: {fileID: 5003154061379813774}
   m_Layer: 0
-  m_Name: Cubeee
+  m_Name: TestObject
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
