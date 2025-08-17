@@ -2,7 +2,8 @@
 
 A Unity Editor extension that makes it easy to visualize differences between YAML-serialized Unity assets (such as prefabs). The tool compares two versions of YAML files and highlights changes in a user-friendly interface, including clickable asset references.
 
-![image](https://i.ibb.co/6cnccfk8/yaml.png)
+![image](Screenshots/YAML-Diff-screen.png)
+![image](Screenshots/YAML-Diff-screen1.png)
 
 
 ## Features
@@ -31,24 +32,22 @@ A Unity Editor extension that makes it easy to visualize differences between YAM
 ## Usage
 
 1. **Open the Diff Tool Window:**  
-   In Unity, go to **Window → YAML Diff Tool** to open the main diff window.
+   In Unity, go to **Window → YAML Prefab Diff** to open the main diff window.
 
 2. **Fetch Changed Assets:**  
-   - Click **Fetch Changed Assets (Git Diff)** to automatically list changed YAML assets from your Git repository.
-   - Alternatively, use **Manually Select Two Files for Diff** to compare any two YAML files.
+   - Click **Fetch Changed (Git Diff)** to automatically list changed YAML assets from your Git repository.
+   - Alternatively, use **Manual Diff** to compare any two YAML files.
 
 3. **View Diff Results:**  
    Clicking on an asset in the list opens a detailed diff view showing changes by YAML path, with clickable GUID links for asset references.
 
-4. **Inspector Highlights:**  
-   When a GameObject is selected in the scene, the custom inspector extension highlights diff information for its components.
-
 ## Requirements
 
-- **Unity:** 2019.4 or later (This was made in Unity 6000.0.30f1)
+- **Unity:** 2021.3 or later (This was made in Unity 6000.0.30f1)
 - **YamlDotNet:** Ensure you have a compatible version of the YamlDotNet DLL in your project. Go to Project Settings -> Player -> Make sure Api Compatibility Level is the same as the .dll you used (I used 2.1)
-- **Git:** Required for Git diff functionality
+- **Git:** Required for Git diff functionality. Your Unity project must be a git repo for this to work.
 
 ## Contributing
 
 Contributions, issues, and feature requests are welcome! Feel free to open an issue or submit a pull request.
+
