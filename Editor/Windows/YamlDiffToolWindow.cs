@@ -1,174 +1,203 @@
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System;
 using UnityEditor;
+using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
-/// <summary>
-/// Main Editor Window that lists changed assets and offers file selection.
-/// </summary>
-public class YamlDiffToolWindow : EditorWindow
+namespace YamlPrefabDiff
 {
-    private Vector2 scrollPos;
-    private List<AssetDiffEntry> assetDiffEntries = new();
-
-    [MenuItem("Window/YAML Diff Tool")]
-    public static void ShowWindow()
+    public class YamlDiffToolWindow : EditorWindow
     {
-        GetWindow<YamlDiffToolWindow>("YAML Diff Tool");
-    }
+        private Vector2 _leftScroll;
+        private List<AssetDiffEntry> _entries = new();
+        private int _selectedIndex = -1;
+        private DiffTreeView _treeView;
+        private TreeViewState _treeState;
 
-    private void OnGUI()
-    {
-        GUILayout.Label("YAML Diff Tool", EditorStyles.boldLabel);
+        [MenuItem("Window/YAML Prefab Diff")] public static void ShowWindow() => GetWindow<YamlDiffToolWindow>("YAML Prefab Diff");
 
-        // Button to auto-fetch changed assets using Git diff.
-        if (GUILayout.Button("Fetch Changed Assets (Git Diff)"))
+        private void OnEnable()
         {
-            FetchChangedAssets();
+            _treeState ??= new TreeViewState();
+            minSize = new Vector2(820, 520);
         }
 
-        // Fallback: manually select two files to compare.
-        if (GUILayout.Button("Manually Select Two Files for Diff"))
+        private void OnGUI()
         {
-            ManualFileSelection();
+            GUILayout.BeginHorizontal(EditorStyles.toolbar);
+            if (GUILayout.Button("Fetch Changed (git diff)", EditorStyles.toolbarButton)) FetchChangedAssets();
+            if (GUILayout.Button("Manual Diff (pick two)", EditorStyles.toolbarButton)) ManualFileSelection();
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+
+            // 2-pane layout
+            Rect r = position;
+            var left = new Rect(0, 22, 280, r.height - 22);
+            var right = new Rect(285, 22, r.width - 290, r.height - 22);
+
+            DrawLeft(left);
+            DrawRight(right);
         }
 
-        GUILayout.Space(10);
-
-        scrollPos = EditorGUILayout.BeginScrollView(scrollPos, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-        foreach (var entry in assetDiffEntries)
+        private void DrawLeft(Rect rect)
         {
-            EditorGUILayout.BeginHorizontal();
-            // Clicking the asset name will ping it and open a detailed diff window.
-            if (GUILayout.Button(entry.AssetPath, GUILayout.Width(300)))
+            GUILayout.BeginArea(rect, (GUIStyle)"box");
+            _leftScroll = GUILayout.BeginScrollView(_leftScroll);
+            for (int i = 0; i < _entries.Count; i++)
             {
-                UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(entry.AssetPath);
-                if (asset != null)
+                var e = _entries[i];
+                GUILayout.BeginHorizontal();
+                var pressed = GUILayout.Toggle(_selectedIndex == i, Path.GetFileName(e.AssetPath), "Button");
+                GUILayout.Label(e.ChangeType, GUILayout.Width(80));
+                GUILayout.EndHorizontal();
+                if (pressed && _selectedIndex != i)
                 {
-                    EditorGUIUtility.PingObject(asset);
-                    Selection.activeObject = asset;
+                    _selectedIndex = i; BuildTree();
                 }
-                YamlDiffResultWindow.ShowWindow(entry);
             }
-            EditorGUILayout.LabelField(entry.ChangeType, GUILayout.Width(100));
-            EditorGUILayout.EndHorizontal();
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
         }
-        EditorGUILayout.EndScrollView();
-    }
 
-    /// <summary>
-    /// Uses Git command-line to list changed files (only YAML files, e.g. prefabs and assets).
-    /// </summary>
-    private void FetchChangedAssets()
-    {
-        assetDiffEntries.Clear();
-        YamlDiffData.DiffEntries.Clear();
-        try
+        private void DrawRight(Rect rect)
         {
-            ProcessStartInfo psi = new()
+            GUILayout.BeginArea(rect);
+            if (_selectedIndex < 0 || _selectedIndex >= _entries.Count)
             {
-                FileName = "git",
-                Arguments = "diff --name-status HEAD~1 HEAD",
-                WorkingDirectory = Application.dataPath.Replace("/Assets", ""),
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+                EditorGUILayout.HelpBox("Select an asset on the left to view hierarchical diff.", MessageType.Info);
+                GUILayout.EndArea();
+                return;
+            }
+            var e = _entries[_selectedIndex];
+            GUILayout.Label(e.AssetPath, EditorStyles.boldLabel);
+            GUILayout.Label(e.ChangeType, EditorStyles.miniBoldLabel);
+            GUILayout.Space(6);
 
-            Process proc = Process.Start(psi);
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit();
+            var h = GUILayoutUtility.GetRect(rect.width, rect.height - 40);
+            _treeView?.OnGUI(h);
+            GUILayout.EndArea();
+        }
 
-            // Parse each line (e.g. "M	Assets/MyPrefab.prefab")
-            string[] lines = output.Split(new[] { "\n", "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
+        private void BuildTree()
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _entries.Count) return;
+            var e = _entries[_selectedIndex];
+            _treeView = new DiffTreeView(_treeState, e);
+        }
+
+        private void FetchChangedAssets()
+        {
+            _entries.Clear();
+            try
             {
-                string[] parts = line.Split('\t');
-                if (parts.Length >= 2)
+                var repoRoot = Application.dataPath.Replace("/Assets", "");
+                var psi = new ProcessStartInfo
                 {
-                    string changeCode = parts[0];
-                    string filePath = parts[1].Trim();
-                    if (filePath.EndsWith(".prefab") || filePath.EndsWith(".asset"))
+                    FileName = "git",
+                    Arguments = "diff --name-status HEAD~1 HEAD",
+                    WorkingDirectory = repoRoot,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                var p = Process.Start(psi);
+                var output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+
+                var lines = output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    var parts = line.Split('\t');
+                    if (parts.Length < 2) continue;
+                    var code = parts[0].Trim();
+                    var path = parts[1].Trim();
+                    if (!path.EndsWith(".prefab") && !path.EndsWith(".asset")) continue;
+
+                    var entry = new AssetDiffEntry
                     {
-                        AssetDiffEntry entry = new()
-                        {
-                            AssetPath = filePath,
-                            ChangeType = (changeCode == "A") ? "Added" : (changeCode == "D") ? "Deleted" : "Modified"
-                        };
+                        AssetPath = path,
+                        ChangeType = code == "A" ? "Added" : code == "D" ? "Deleted" : "Modified"
+                    };
 
-                        // For modified files, obtain the diff between the previous commit and current.
-                        if (changeCode == "M")
-                        {
-                            string fullPath = Path.Combine(Application.dataPath.Replace("/Assets", ""), filePath);
-                            string currentContent = File.ReadAllText(fullPath);
-                            string previousContent = GetFileContentFromGit(filePath, "HEAD~1");
-                            entry.DiffResults = YamlDiffer.DiffYaml(previousContent, currentContent);
-                        }
-                        assetDiffEntries.Add(entry);
-                        YamlDiffData.DiffEntries[entry.AssetPath] = entry;
+                    if (code == "M")
+                    {
+                        var full = Path.Combine(Application.dataPath.Replace("/Assets", ""), path);
+                        var cur = File.Exists(full) ? File.ReadAllText(full) : string.Empty;
+                        var prev = GetFileFromGit(path, "HEAD~1");
+
+                        // graphs for hierarchy resolution
+                        var oldDocs = UnityYamlParsing.ExtractDocuments(prev);
+                        var newDocs = UnityYamlParsing.ExtractDocuments(cur);
+                        entry.OldGraph = PrefabGraphBuilder.Build(oldDocs);
+                        entry.NewGraph = PrefabGraphBuilder.Build(newDocs);
+
+                        entry.DiffResults = DiffEngine.Diff(prev, cur, entry.OldGraph, entry.NewGraph);
                     }
+
+                    _entries.Add(entry);
                 }
             }
-        }
-        catch (Exception e)
-        {
-            UnityEngine.Debug.LogError("Error fetching git diff: " + e.Message);
-        }
-    }
-
-    /// <summary>
-    /// Opens two file panels so the user can manually select files to compare.
-    /// </summary>
-    private void ManualFileSelection()
-    {
-        string fileA = EditorUtility.OpenFilePanel("Select First YAML File", Application.dataPath, "prefab,asset,yaml");
-        string fileB = EditorUtility.OpenFilePanel("Select Second YAML File", Application.dataPath, "prefab,asset,yaml");
-        if (!string.IsNullOrEmpty(fileA) && !string.IsNullOrEmpty(fileB))
-        {
-            AssetDiffEntry entry = new ()
+            catch (Exception e)
             {
-                AssetPath = "Manual Diff: " + Path.GetFileName(fileA) + " vs " + Path.GetFileName(fileB),
+                UnityEngine.Debug.LogError($"git diff error: {e.Message}");
+            }
+            _selectedIndex = _entries.Count > 0 ? 0 : -1;
+            BuildTree();
+        }
+
+        private void ManualFileSelection()
+        {
+            var a = EditorUtility.OpenFilePanel("Select First YAML", Application.dataPath, "prefab,asset,yaml");
+            var b = EditorUtility.OpenFilePanel("Select Second YAML", Application.dataPath, "prefab,asset,yaml");
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return;
+
+            var entry = new AssetDiffEntry
+            {
+                AssetPath = $"Manual Diff: {Path.GetFileName(a)} vs {Path.GetFileName(b)}",
                 ChangeType = "Manual"
             };
-            string contentA = File.ReadAllText(fileA);
-            string contentB = File.ReadAllText(fileB);
-            entry.DiffResults = YamlDiffer.DiffYaml(contentA, contentB);
-            assetDiffEntries.Add(entry);
-        }
-    }
 
-    /// <summary>
-    /// Helper that runs a Git command to retrieve the file content from a specific commit.
-    /// </summary>
-    /// <param name="assetPath"></param>
-    /// <param name="commitRef"></param>
-    /// <returns></returns>
-    private string GetFileContentFromGit(string assetPath, string commitRef)
-    {
-        try
+            var A = File.ReadAllText(a);
+            var B = File.ReadAllText(b);
+            var oldDocs = UnityYamlParsing.ExtractDocuments(A);
+            var newDocs = UnityYamlParsing.ExtractDocuments(B);
+            entry.OldGraph = PrefabGraphBuilder.Build(oldDocs);
+            entry.NewGraph = PrefabGraphBuilder.Build(newDocs);
+            entry.DiffResults = DiffEngine.Diff(A, B, entry.OldGraph, entry.NewGraph);
+
+            _entries.Add(entry);
+            _selectedIndex = _entries.Count - 1;
+            BuildTree();
+        }
+
+        private string GetFileFromGit(string assetPath, string commit)
         {
-            ProcessStartInfo psi = new()
+            try
             {
-                FileName = "git",
-                Arguments = $"show {commitRef}:{assetPath}",
-                WorkingDirectory = Application.dataPath.Replace("/Assets", ""),
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            Process proc = Process.Start(psi);
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit();
-            return output;
-        }
-        catch (Exception e)
-        {
-            UnityEngine.Debug.LogError("Error getting file content from git: " + e.Message);
-            return "";
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = $"show {commit}:{assetPath}",
+                    WorkingDirectory = Application.dataPath.Replace("/Assets", ""),
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                var p = Process.Start(psi);
+                var output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+                return output;
+            }
+            catch (Exception e)
+            {
+                UnityEngine.Debug.LogError($"git show error: {e.Message}");
+                return string.Empty;
+            }
         }
     }
 }
