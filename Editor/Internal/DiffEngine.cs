@@ -3,17 +3,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-using UnityEngine;
 using UnityEditor;
+using UnityEngine;
 using YamlDotNet.RepresentationModel;
 
 namespace YamlPrefabDiff
 {
     internal static class DiffEngine
     {
-        private static readonly Color AddedC = new(0.4f, 1f, 0.4f);
-        private static readonly Color RemovedC = new(1f, 0.4f, 0.4f);
-        private static readonly Color ModifiedC = new(0.9f, 0.7f, 0.2f);
+        private static readonly Regex GuidRx = new Regex(@"\b[0-9A-Fa-f]{32}\b", RegexOptions.Compiled);
 
         public static List<DiffResult> Diff(string oldYaml, string newYaml, PrefabGraph oldGraph, PrefabGraph newGraph)
         {
@@ -21,71 +19,121 @@ namespace YamlPrefabDiff
             var oldDocs = UnityYamlParsing.ExtractDocuments(oldYaml);
             var newDocs = UnityYamlParsing.ExtractDocuments(newYaml);
 
-            // Index by fileId
-            var newById = newDocs.ToDictionary(d => d.FileId, d => d);
-            var oldById = oldDocs.ToDictionary(d => d.FileId, d => d);
+            var newById = new Dictionary<long, UnityYamlDocument>();
+            for (int i = 0; i < newDocs.Count; i++) newById[newDocs[i].FileId] = newDocs[i];
 
-            // Modified or removed
-            foreach (var od in oldDocs)
+            var oldById = new Dictionary<long, UnityYamlDocument>();
+            for (int i = 0; i < oldDocs.Count; i++) oldById[oldDocs[i].FileId] = oldDocs[i];
+
+            // Build secondary keys for components to survive fileID churn
+            var oldByKey = new Dictionary<string, UnityYamlDocument>();
+            for (int i = 0; i < oldDocs.Count; i++)
             {
-                if (newById.TryGetValue(od.FileId, out var nd))
+                var d = oldDocs[i];
+                var k = CompKey(d);
+                if (!string.IsNullOrEmpty(k) && !oldByKey.ContainsKey(k)) oldByKey[k] = d;
+            }
+
+            var pairedNewIds = new HashSet<long>();
+
+            // exact id matches
+            for (int i = 0; i < oldDocs.Count; i++)
+            {
+                var od = oldDocs[i];
+                UnityYamlDocument nd;
+                if (newById.TryGetValue(od.FileId, out nd))
                 {
                     DiffYamlNodes(od, nd, "", diffs, oldGraph, newGraph);
-                }
-                else
-                {
-                    // whole document removed
-                    diffs.Add(new DiffResult
-                    {
-                        ChangeType = "removed",
-                        DocFileId = od.FileId,
-                        ClassId = od.ClassId,
-                        ComponentType = od.TypeName,
-                        HierarchyPath = ResolveHierarchyPath(od.FileId, oldGraph, componentLabel: od.TypeName),
-                        FieldPath = "<document>",
-                        OldValue = PrettifyValue(od.RawText),
-                        NewValue = null,
-                        OwnerGameObject = ResolveOwnerName(od.FileId, oldGraph)
-                    });
-                }
-            }
-            // Added
-            foreach (var nd in newDocs)
-            {
-                if (!oldById.ContainsKey(nd.FileId))
-                {
-                    diffs.Add(new DiffResult
-                    {
-                        ChangeType = "added",
-                        DocFileId = nd.FileId,
-                        ClassId = nd.ClassId,
-                        ComponentType = nd.TypeName,
-                        HierarchyPath = ResolveHierarchyPath(nd.FileId, newGraph, componentLabel: nd.TypeName),
-                        FieldPath = "<document>",
-                        OldValue = null,
-                        NewValue = PrettifyValue(nd.RawText),
-                        OwnerGameObject = ResolveOwnerName(nd.FileId, newGraph)
-                    });
+                    pairedNewIds.Add(nd.FileId);
                 }
             }
 
-            // Cleanup: ignore GameObject m_Component removals (noise)
-            diffs.RemoveAll(d => string.Equals(d.ComponentType, "GameObject", StringComparison.OrdinalIgnoreCase) && d.FieldPath.Contains("/m_Component"));
-
-            // GUID prettify pass
-            foreach (var d in diffs)
+            // re-id matches
+            for (int i = 0; i < newDocs.Count; i++)
             {
-                d.OldValue = PrettifyGuids(d.OldValue);
-                d.NewValue = PrettifyGuids(d.NewValue);
+                var nd = newDocs[i];
+                if (pairedNewIds.Contains(nd.FileId)) continue;
+                var key = CompKey(nd);
+                if (string.IsNullOrEmpty(key)) continue;
+                UnityYamlDocument od;
+                if (oldByKey.TryGetValue(key, out od))
+                {
+                    DiffYamlNodes(od, nd, "", diffs, oldGraph, newGraph);
+                    pairedNewIds.Add(nd.FileId);
+                    oldById.Remove(od.FileId);
+                }
+            }
+
+            // Remaining olds -> removed
+            for (int i = 0; i < oldDocs.Count; i++)
+            {
+                var od = oldDocs[i];
+                if (newById.ContainsKey(od.FileId)) continue;
+                var k = CompKey(od);
+                if (k != null && oldByKey.ContainsKey(k) && !object.ReferenceEquals(oldByKey[k], od)) continue;
+
+                diffs.Add(new DiffResult
+                {
+                    ChangeType = "removed",
+                    DocFileId = od.FileId,
+                    ClassId = od.ClassId,
+                    ComponentType = od.TypeName,
+                    HierarchyPath = ResolveHierarchyPath(od.FileId, oldGraph, od.TypeName),
+                    FieldPath = "<document>",
+                    OldValue = PrettifyValue(od.RawText),
+                    NewValue = null,
+                    OwnerGameObject = ResolveOwnerName(od.FileId, oldGraph)
+                });
+            }
+
+            // Remaining news -> added
+            for (int i = 0; i < newDocs.Count; i++)
+            {
+                var nd = newDocs[i];
+                if (pairedNewIds.Contains(nd.FileId)) continue;
+
+                diffs.Add(new DiffResult
+                {
+                    ChangeType = "added",
+                    DocFileId = nd.FileId,
+                    ClassId = nd.ClassId,
+                    ComponentType = nd.TypeName,
+                    HierarchyPath = ResolveHierarchyPath(nd.FileId, newGraph, nd.TypeName),
+                    FieldPath = "<document>",
+                    OldValue = null,
+                    NewValue = PrettifyValue(nd.RawText),
+                    OwnerGameObject = ResolveOwnerName(nd.FileId, newGraph)
+                });
+            }
+
+            // Remove noisy GameObject m_Component changes
+            diffs.RemoveAll(d => string.Equals(d.ComponentType, "GameObject", StringComparison.OrdinalIgnoreCase)
+                              && d.FieldPath.IndexOf("/m_Component", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            // Prettify GUIDs
+            for (int i = 0; i < diffs.Count; i++)
+            {
+                diffs[i].OldValue = PrettifyGuids(diffs[i].OldValue);
+                diffs[i].NewValue = PrettifyGuids(diffs[i].NewValue);
             }
 
             return diffs;
         }
 
-        private static void DiffYamlNodes(UnityYamlDocument oldDoc, UnityYamlDocument newDoc, string path, List<DiffResult> diffs, PrefabGraph oldGraph, PrefabGraph newGraph)
+        private static string CompKey(UnityYamlDocument d)
         {
-            var on = oldDoc.Yaml.RootNode; var nn = newDoc.Yaml.RootNode;
-            // Different top-level types → treat as modified wholesale
+            if (d == null) return null;
+            if (d.TypeName == "GameObject" || d.TypeName == "Transform") return null;
+            var owner = d.OwnerGameObjectFileId;
+            if (!string.IsNullOrEmpty(d.ScriptGuid))
+                return "MB:" + owner + ":" + d.ScriptGuid;            // MonoBehaviour key
+            return "CP:" + owner + ":" + d.ClassId + ":" + d.TypeName; // other component key
+        }
+
+        private static void DiffYamlNodes(UnityYamlDocument oldDoc, UnityYamlDocument newDoc, string path,
+                                          List<DiffResult> diffs,
+                                          PrefabGraph oldGraph, PrefabGraph newGraph)
+        {
             if (oldDoc.TypeName != newDoc.TypeName)
             {
                 diffs.Add(new DiffResult
@@ -94,7 +142,7 @@ namespace YamlPrefabDiff
                     DocFileId = newDoc.FileId,
                     ClassId = newDoc.ClassId,
                     ComponentType = newDoc.TypeName,
-                    HierarchyPath = ResolveHierarchyPath(newDoc.FileId, newGraph, componentLabel: newDoc.TypeName),
+                    HierarchyPath = ResolveHierarchyPath(newDoc.FileId, newGraph, newDoc.TypeName),
                     FieldPath = path,
                     OldValue = PrettifyValue(oldDoc.RawText),
                     NewValue = PrettifyValue(newDoc.RawText),
@@ -103,146 +151,163 @@ namespace YamlPrefabDiff
                 return;
             }
 
-            // Walk mapping under top key
-            var oldTop = (YamlMappingNode)on; var newTop = (YamlMappingNode)nn;
+            var oldTop = (YamlMappingNode)oldDoc.Yaml.RootNode;
+            var newTop = (YamlMappingNode)newDoc.Yaml.RootNode;
             var topKey = new YamlScalarNode(oldDoc.TypeName);
-            if (!oldTop.Children.TryGetValue(topKey, out var oldVal) || !newTop.Children.TryGetValue(topKey, out var newVal))
+
+            YamlNode oldVal, newVal;
+            if (!oldTop.Children.TryGetValue(topKey, out oldVal) || !newTop.Children.TryGetValue(topKey, out newVal))
                 return;
+
             Recurse(oldVal, newVal, path, diffs, oldDoc, newDoc, oldGraph, newGraph);
         }
 
-        private static void Recurse(YamlNode o, YamlNode n, string path, List<DiffResult> diffs, UnityYamlDocument oldDoc, UnityYamlDocument newDoc, PrefabGraph oldGraph, PrefabGraph newGraph)
+        private static void Recurse(YamlNode o, YamlNode n, string path,
+                                    List<DiffResult> diffs,
+                                    UnityYamlDocument oldDoc, UnityYamlDocument newDoc,
+                                    PrefabGraph oldGraph, PrefabGraph newGraph)
         {
             if (o == null && n != null)
             {
-                Add(o, n, path, diffs, newDoc, newGraph, "added"); return;
+                Add(o, n, path, diffs, newDoc, newGraph, "added");
+                return;
             }
             if (o != null && n == null)
             {
-                Add(o, n, path, diffs, oldDoc, oldGraph, "removed"); return;
+                Add(o, n, path, diffs, oldDoc, oldGraph, "removed");
+                return;
             }
             if (o.GetType() != n.GetType())
             {
-                Add(o, n, path, diffs, newDoc, newGraph, "modified"); return;
-            }
-
-            if (o is YamlScalarNode os && n is YamlScalarNode ns)
-            {
-                var ov = os.Value; var nv = ns.Value;
-                if (ov != nv)
-                {
-                    Add(o, n, path, diffs, newDoc, newGraph, "modified", ov, nv);
-                }
+                Add(o, n, path, diffs, newDoc, newGraph, "modified");
                 return;
             }
-            if (o is YamlMappingNode om && n is YamlMappingNode nm)
+
+            var os = o as YamlScalarNode; var ns = n as YamlScalarNode;
+            if (os != null && ns != null)
+            {
+                var ov = os.Value; var nv = ns.Value;
+                if (ov != nv) Add(o, n, path, diffs, newDoc, newGraph, "modified", ov, nv);
+                return;
+            }
+
+            var om = o as YamlMappingNode; var nm = n as YamlMappingNode;
+            if (om != null && nm != null)
             {
                 // Keys in old
                 foreach (var kv in om.Children)
                 {
-                    var key = kv.Key.ToString();
-                    nm.Children.TryGetValue(kv.Key, out var nv);
-                    Recurse(kv.Value, nv, path + "/" + key, diffs, oldDoc, newDoc, oldGraph, newGraph);
+                    var keyStr = kv.Key.ToString();
+                    YamlNode nv;
+                    nm.Children.TryGetValue(kv.Key, out nv);
+                    Recurse(kv.Value, nv, path + "/" + keyStr, diffs, oldDoc, newDoc, oldGraph, newGraph);
                 }
                 // Keys only in new
                 foreach (var kv in nm.Children)
                 {
                     if (!om.Children.ContainsKey(kv.Key))
                     {
-                        var key = kv.Key.ToString();
-                        Recurse(null, kv.Value, path + "/" + key, diffs, oldDoc, newDoc, oldGraph, newGraph);
+                        var keyStr = kv.Key.ToString();
+                        Recurse(null, kv.Value, path + "/" + keyStr, diffs, oldDoc, newDoc, oldGraph, newGraph);
                     }
                 }
                 return;
             }
-            if (o is YamlSequenceNode osq && n is YamlSequenceNode nsq)
+
+            var osq = o as YamlSequenceNode; var nsq = n as YamlSequenceNode;
+            if (osq != null && nsq != null)
             {
                 int c = Math.Max(osq.Children.Count, nsq.Children.Count);
                 for (int i = 0; i < c; i++)
                 {
                     var oo = i < osq.Children.Count ? osq.Children[i] : null;
                     var nn = i < nsq.Children.Count ? nsq.Children[i] : null;
-                    Recurse(oo, nn, path + $"[{i}]", diffs, oldDoc, newDoc, oldGraph, newGraph);
+                    Recurse(oo, nn, path + "[" + i + "]", diffs, oldDoc, newDoc, oldGraph, newGraph);
                 }
                 return;
             }
         }
 
-        private static void Add(YamlNode o, YamlNode n, string fieldPath, List<DiffResult> diffs, UnityYamlDocument docForMeta, PrefabGraph graph, string change, string ov = null, string nv = null)
+        private static void Add(YamlNode o, YamlNode n, string fieldPath,
+                                List<DiffResult> diffs, UnityYamlDocument docForMeta, PrefabGraph graph,
+                                string change, string ov = null, string nv = null)
         {
-            string oldVal = ov ?? o?.ToString();
-            string newVal = nv ?? n?.ToString();
-            var comp = docForMeta.TypeName;
-            var fileId = docForMeta.FileId;
+            string oldVal = ov ?? (o != null ? o.ToString() : null);
+            string newVal = nv ?? (n != null ? n.ToString() : null);
 
             diffs.Add(new DiffResult
             {
                 ChangeType = change,
-                DocFileId = fileId,
+                DocFileId = docForMeta.FileId,
                 ClassId = docForMeta.ClassId,
-                ComponentType = comp,
+                ComponentType = docForMeta.TypeName,
                 FieldPath = fieldPath,
-                HierarchyPath = ResolveHierarchyPath(fileId, graph, comp),
+                HierarchyPath = ResolveHierarchyPath(docForMeta.FileId, graph, docForMeta.TypeName),
                 OldValue = PrettifyValue(oldVal),
                 NewValue = PrettifyValue(newVal),
-                OwnerGameObject = ResolveOwnerName(fileId, graph)
+                OwnerGameObject = ResolveOwnerName(docForMeta.FileId, graph)
             });
         }
 
         private static string ResolveOwnerName(long? docFileId, PrefabGraph graph)
         {
             if (docFileId == null || graph == null) return null;
-            if (graph.Components.TryGetValue(docFileId.Value, out var ci))
+
+            ComponentInfo ci;
+            if (graph.Components.TryGetValue(docFileId.Value, out ci))
             {
-                if (graph.GameObjects.TryGetValue(ci.OwnerGameObjectFileId, out var go))
+                GameObjectInfo go;
+                if (graph.GameObjects.TryGetValue(ci.OwnerGameObjectFileId, out go))
                     return go.Name;
             }
-            if (graph.GameObjects.TryGetValue(docFileId.Value, out var go2)) return go2.Name;
+            GameObjectInfo go2;
+            if (graph.GameObjects.TryGetValue(docFileId.Value, out go2)) return go2.Name;
             return null;
         }
 
-        private static string ResolveHierarchyPath(long? docFileId, PrefabGraph graph, string componentLabel = null)
+        private static string ResolveHierarchyPath(long? docFileId, PrefabGraph graph, string componentLabel)
         {
             if (docFileId == null || graph == null) return componentLabel ?? "";
 
-            // If this is a component, hop to its GO
             long targetGoId = 0;
-            if (graph.Components.TryGetValue(docFileId.Value, out var comp) && comp.OwnerGameObjectFileId != 0)
-                targetGoId = comp.OwnerGameObjectFileId;
+            ComponentInfo ci;
+            if (graph.Components.TryGetValue(docFileId.Value, out ci) && ci.OwnerGameObjectFileId != 0)
+                targetGoId = ci.OwnerGameObjectFileId;
             else if (graph.GameObjects.ContainsKey(docFileId.Value))
                 targetGoId = docFileId.Value;
 
             if (targetGoId == 0) return componentLabel ?? "";
 
-            // Find the node containing this GO (via its Transform)
-            var node = graph.TransformToNode.Values.FirstOrDefault(n => n.GameObjectFileId == targetGoId);
+            // Find node by GO
+            PrefabNode node = null;
+            foreach (var n in graph.TransformToNode.Values)
+            {
+                if (n.GameObjectFileId == targetGoId) { node = n; break; }
+            }
             if (node == null)
             {
-                // Maybe the doc is actually a Transform itself
-                if (graph.TransformToNode.TryGetValue(docFileId.Value, out var tnode)) node = tnode;
+                // maybe the doc is a Transform
+                if (!graph.TransformToNode.TryGetValue(docFileId.Value, out node)) return componentLabel ?? "";
             }
-            if (node == null) return componentLabel ?? "";
 
-            // Build path up to root
-            List<string> segments = new();
-            BuildPath(node, graph, segments);
-            var goPath = string.Join("/", segments);
-            return string.IsNullOrEmpty(componentLabel) ? goPath : $"{goPath} ({componentLabel})";
+            var segments = new List<string>();
+            BuildPathToRoot(node, graph, segments);
+            var goPath = string.Join("/", segments.ToArray());
+
+            return string.IsNullOrEmpty(componentLabel) ? goPath : (goPath + " (" + componentLabel + ")");
         }
 
-        private static void BuildPath(PrefabNode node, PrefabGraph graph, List<string> acc)
+        private static void BuildPathToRoot(PrefabNode node, PrefabGraph graph, List<string> acc)
         {
             PrefabNode parent = null;
             foreach (var n in graph.TransformToNode.Values)
             {
                 if (n.Children.Contains(node)) { parent = n; break; }
             }
-            if (parent != null) BuildPath(parent, graph, acc);
+            if (parent != null) BuildPathToRoot(parent, graph, acc);
             acc.Add(node.Name);
         }
 
-        // Render helpers
-        private static readonly Regex GuidRx = new(@"\b[0-9A-Fa-f]{32}\b", RegexOptions.Compiled);
         private static string PrettifyGuids(string input)
         {
             if (string.IsNullOrEmpty(input)) return input;
@@ -253,7 +318,7 @@ namespace YamlPrefabDiff
                 if (!string.IsNullOrEmpty(path))
                 {
                     var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
-                    if (obj != null) return $"{obj.name} ({guid})";
+                    if (obj != null) return obj.name + " (" + guid + ")";
                 }
                 return guid;
             });
@@ -262,7 +327,6 @@ namespace YamlPrefabDiff
         private static string PrettifyValue(string v)
         {
             if (string.IsNullOrEmpty(v)) return v;
-            // keep short scalars short
             if (v.IndexOf('\n') < 0 && v.Length <= 120) return v;
             return v.Trim();
         }

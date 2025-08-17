@@ -1,5 +1,4 @@
 #if UNITY_EDITOR
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -13,147 +12,198 @@ namespace YamlPrefabDiff
         {
             var graph = new PrefabGraph();
 
-            // First pass: collect GameObjects & Components; map component -> GO and remember Transform IDs
-            foreach (var d in docs)
+            // collect GameObjects and Components, map component → GO
+            for (int i = 0; i < docs.Count; i++)
             {
-                var root = (YamlMappingNode)d.Yaml.RootNode; // top-level mapping (GameObject:, Transform:, etc.)
-                var topKey = d.TypeName;
-                if (!root.Children.TryGetValue(new YamlScalarNode(topKey), out var topVal))
-                    continue;
+                var d = docs[i];
+                var root = d.Yaml.RootNode as YamlMappingNode;
+                if (root == null) continue;
+                if (!root.Children.TryGetValue(new YamlScalarNode(d.TypeName), out var topVal)) continue;
                 var map = topVal as YamlMappingNode;
                 if (map == null) continue;
 
-                if (string.Equals(topKey, "GameObject", StringComparison.Ordinal))
+                if (d.TypeName == "GameObject")
                 {
-                    var go = new GameObjectInfo { FileId = d.FileId, Name = ReadString(map, "m_Name") ?? $"GameObject({d.FileId})" };
+                    var go = new GameObjectInfo();
+                    go.FileId = d.FileId;
+                    go.Name = ReadString(map, "m_Name");
+                    if (string.IsNullOrEmpty(go.Name)) go.Name = "GameObject(" + d.FileId + ")";
 
-                    // Components list: m_Component: - {fileID: X, ...}
-                    if (map.Children.TryGetValue(new YamlScalarNode("m_Component"), out var compsNode) && compsNode is YamlSequenceNode seq)
+                    // Components list: m_Component: array of entries that include fileID
+                    YamlNode compNode;
+                    if (map.Children.TryGetValue(new YamlScalarNode("m_Component"), out compNode))
                     {
-                        foreach (var item in seq.Children)
+                        var seq = compNode as YamlSequenceNode;
+                        if (seq != null)
                         {
-                            // Entries look like: 4: {fileID: 123}  OR  - component: {fileID: 123} depending on Unity version
-                            long compId = TryExtractFileIdFromComponentEntry(item);
-                            if (compId != 0) go.ComponentIds.Add(compId);
+                            foreach (var item in seq.Children)
+                            {
+                                long cid = TryExtractFileIdFromComponentEntry(item);
+                                if (cid != 0) go.ComponentIds.Add(cid);
+                            }
                         }
                     }
                     graph.GameObjects[d.FileId] = go;
                 }
                 else
                 {
-                    // Generic component mapping
-                    var ci = new ComponentInfo
-                    {
-                        FileId = d.FileId,
-                        ClassId = d.ClassId,
-                        TypeName = d.TypeName,
-                        OwnerGameObjectFileId = d.OwnerGameObjectFileId
-                    };
+                    // Generic component
+                    var ci = new ComponentInfo();
+                    ci.FileId = d.FileId;
+                    ci.ClassId = d.ClassId;
+                    ci.TypeName = d.TypeName;
+                    ci.OwnerGameObjectFileId = d.OwnerGameObjectFileId;
                     graph.Components[d.FileId] = ci;
-                    if (ci.OwnerGameObjectFileId != 0)
+
+                    if (ci.OwnerGameObjectFileId != 0 && !graph.ComponentToGameObject.ContainsKey(d.FileId))
                         graph.ComponentToGameObject[d.FileId] = ci.OwnerGameObjectFileId;
                 }
             }
 
-            // Second pass: build Transform relationships into PrefabNode tree(s)
-            var transformToGo = graph.Components
-                .Where(kv => string.Equals(kv.Value.TypeName, "Transform", StringComparison.Ordinal))
-                .ToDictionary(kv => kv.Key, kv => kv.Value.OwnerGameObjectFileId);
-
-            // Build nodes for each GO that has a Transform component
-            foreach (var kv in transformToGo)
+            // make PrefabNodes from Transforms and wire children
+            var transformDocs = docs.Where(x => x.TypeName == "Transform").ToList();
+            for (int i = 0; i < transformDocs.Count; i++)
             {
-                var transformFileId = kv.Key;
-                var goFileId = kv.Value;
-                if (!graph.GameObjects.TryGetValue(goFileId, out var goInfo)) continue;
+                var d = transformDocs[i];
+                var root = d.Yaml.RootNode as YamlMappingNode;
+                if (root == null) continue;
+                YamlNode tVal;
+                if (!root.Children.TryGetValue(new YamlScalarNode("Transform"), out tVal)) continue;
+                var tMap = tVal as YamlMappingNode;
+                if (tMap == null) continue;
 
-                var node = new PrefabNode
+                // Owner GO
+                long goId = d.OwnerGameObjectFileId;
+                if (goId == 0)
                 {
-                    Name = goInfo.Name,
-                    GameObjectFileId = goFileId,
-                    TransformFileId = transformFileId,
-                };
+                    long tmp;
+                    if (TryReadFileIdRef(tMap, "m_GameObject", out tmp)) goId = tmp;
+                }
+                if (goId == 0) continue;
 
-                // Non-transform components under this GO
-                foreach (var compId in goInfo.ComponentIds)
+                GameObjectInfo goInfo;
+                if (!graph.GameObjects.TryGetValue(goId, out goInfo)) continue;
+
+                var node = new PrefabNode();
+                node.Name = goInfo.Name;
+                node.GameObjectFileId = goId;
+                node.TransformFileId = d.FileId;
+
+                // Non-transform components of this GO
+                for (int c = 0; c < goInfo.ComponentIds.Count; c++)
                 {
-                    if (compId == transformFileId) continue;
+                    var compId = goInfo.ComponentIds[c];
+                    if (compId == d.FileId) continue;
                     node.ComponentFileIds.Add(compId);
                 }
 
-                graph.TransformToNode[transformFileId] = node;
+                graph.TransformToNode[d.FileId] = node;
             }
 
-            // Wire parent/children
-            foreach (var d in docs.Where(x => x.TypeName == "Transform"))
+            // Wire up parent/children, mark roots
+            for (int i = 0; i < transformDocs.Count; i++)
             {
-                var root = (YamlMappingNode)d.Yaml.RootNode;
-                if (!root.Children.TryGetValue(new YamlScalarNode("Transform"), out var tVal)) continue;
-                if (tVal is not YamlMappingNode tMap) continue;
+                var d = transformDocs[i];
+                var root = d.Yaml.RootNode as YamlMappingNode;
+                if (root == null) continue;
+                YamlNode tVal;
+                if (!root.Children.TryGetValue(new YamlScalarNode("Transform"), out tVal)) continue;
+                var tMap = tVal as YamlMappingNode;
+                if (tMap == null) continue;
 
-                var fatherId = ReadFileIdRef(tMap, "m_Father") ?? 0;
+                long fatherId;
+                if (!TryReadFileIdRef(tMap, "m_Father", out fatherId)) fatherId = 0;
+
                 var children = ReadChildrenTransformIds(tMap);
 
-                if (graph.TransformToNode.TryGetValue(d.FileId, out var node))
-                {
-                    // Add children
-                    foreach (var childTid in children)
-                    {
-                        if (graph.TransformToNode.TryGetValue(childTid, out var childNode))
-                        {
-                            node.Children.Add(childNode);
-                        }
-                    }
+                PrefabNode node;
+                if (!graph.TransformToNode.TryGetValue(d.FileId, out node)) continue;
 
-                    // If no father, it's a root
-                    if (fatherId == 0)
-                        graph.Roots.Add(node);
+                // Add children
+                for (int k = 0; k < children.Count; k++)
+                {
+                    var childTid = children[k];
+                    PrefabNode childNode;
+                    if (graph.TransformToNode.TryGetValue(childTid, out childNode))
+                    {
+                        node.Children.Add(childNode);
+                    }
+                }
+
+                // Root?
+                if (fatherId == 0)
+                {
+                    if (!graph.Roots.Contains(node)) graph.Roots.Add(node);
                 }
             }
 
-            // Fallback: any orphan nodes not added (rare malformed) � add as roots
-            foreach (var n in graph.TransformToNode.Values)
+            // Any orphans become roots
+            foreach (var kv in graph.TransformToNode)
             {
-                if (!graph.Roots.Contains(n) && !graph.TransformToNode.Values.Any(p => p.Children.Contains(n)))
-                    graph.Roots.Add(n);
+                var n = kv.Value;
+                bool hasParent = false;
+                foreach (var p in graph.TransformToNode.Values)
+                {
+                    if (p.Children.Contains(n)) { hasParent = true; break; }
+                }
+                if (!hasParent && !graph.Roots.Contains(n)) graph.Roots.Add(n);
             }
 
             return graph;
         }
 
-        // Utilities
+        // Helpers
         private static string ReadString(YamlMappingNode map, string key)
         {
-            if (map.Children.TryGetValue(new YamlScalarNode(key), out var val) && val is YamlScalarNode s)
-                return s.Value;
+            YamlNode val;
+            if (map.Children.TryGetValue(new YamlScalarNode(key), out val))
+            {
+                var s = val as YamlScalarNode;
+                if (s != null) return s.Value;
+            }
             return null;
         }
 
-        private static long? ReadFileIdRef(YamlMappingNode map, string key)
+        private static bool TryReadFileIdRef(YamlMappingNode map, string key, out long id)
         {
-            // key: {fileID: 123, guid: ..., type: ...}
-            if (!map.Children.TryGetValue(new YamlScalarNode(key), out var val)) return null;
-            if (val is YamlMappingNode refMap)
+            id = 0;
+            YamlNode val;
+            if (!map.Children.TryGetValue(new YamlScalarNode(key), out val)) return false;
+            var refMap = val as YamlMappingNode;
+            if (refMap == null) return false;
+            YamlNode idNode;
+            if (refMap.Children.TryGetValue(new YamlScalarNode("fileID"), out idNode))
             {
-                if (refMap.Children.TryGetValue(new YamlScalarNode("fileID"), out var idNode) && idNode is YamlScalarNode idScalar)
+                var idScalar = idNode as YamlScalarNode;
+                if (idScalar != null)
                 {
-                    if (long.TryParse(idScalar.Value, out var id)) return id;
+                    long tmp;
+                    if (long.TryParse(idScalar.Value, out tmp)) { id = tmp; return true; }
                 }
             }
-            return null;
+            return false;
         }
 
         private static List<long> ReadChildrenTransformIds(YamlMappingNode tMap)
         {
             var result = new List<long>();
-            if (!tMap.Children.TryGetValue(new YamlScalarNode("m_Children"), out var val)) return result;
-            if (val is YamlSequenceNode seq)
+            YamlNode val;
+            if (!tMap.Children.TryGetValue(new YamlScalarNode("m_Children"), out val)) return result;
+            var seq = val as YamlSequenceNode;
+            if (seq == null) return result;
+
+            for (int i = 0; i < seq.Children.Count; i++)
             {
-                foreach (var item in seq.Children)
+                var item = seq.Children[i] as YamlMappingNode;
+                if (item == null) continue;
+                YamlNode idNode;
+                if (item.Children.TryGetValue(new YamlScalarNode("fileID"), out idNode))
                 {
-                    if (item is YamlMappingNode m && m.Children.TryGetValue(new YamlScalarNode("fileID"), out var idNode) && idNode is YamlScalarNode idScalar)
+                    var idScalar = idNode as YamlScalarNode;
+                    if (idScalar != null)
                     {
-                        if (long.TryParse(idScalar.Value, out var id)) result.Add(id);
+                        long tmp;
+                        if (long.TryParse(idScalar.Value, out tmp)) result.Add(tmp);
                     }
                 }
             }
@@ -162,22 +212,48 @@ namespace YamlPrefabDiff
 
         private static long TryExtractFileIdFromComponentEntry(YamlNode node)
         {
-            // Formats seen:
+            // Formats:
             //  - "4: {fileID: 8}"
-            //  - "- component: {fileID: 8}"
-            if (node is YamlMappingNode map)
+            //  - "component: {fileID: 8}"
+            var map = node as YamlMappingNode;
+            if (map != null)
             {
                 // case: "4: {fileID: 8}"
                 foreach (var kv in map.Children)
                 {
-                    if (kv.Value is YamlMappingNode inner && inner.Children.TryGetValue(new YamlScalarNode("fileID"), out var idNode) && idNode is YamlScalarNode s && long.TryParse(s.Value, out var id))
-                        return id;
+                    var inner = kv.Value as YamlMappingNode;
+                    if (inner != null)
+                    {
+                        YamlNode idNode;
+                        if (inner.Children.TryGetValue(new YamlScalarNode("fileID"), out idNode))
+                        {
+                            var s = idNode as YamlScalarNode;
+                            if (s != null)
+                            {
+                                long id;
+                                if (long.TryParse(s.Value, out id)) return id;
+                            }
+                        }
+                    }
                 }
                 // case: "component: {fileID: 8}"
-                if (map.Children.TryGetValue(new YamlScalarNode("component"), out var compRef) && compRef is YamlMappingNode refMap)
+                YamlNode compRef;
+                if (map.Children.TryGetValue(new YamlScalarNode("component"), out compRef))
                 {
-                    if (refMap.Children.TryGetValue(new YamlScalarNode("fileID"), out var idNode) && idNode is YamlScalarNode s && long.TryParse(s.Value, out var id))
-                        return id;
+                    var refMap = compRef as YamlMappingNode;
+                    if (refMap != null)
+                    {
+                        YamlNode idNode;
+                        if (refMap.Children.TryGetValue(new YamlScalarNode("fileID"), out idNode))
+                        {
+                            var s = idNode as YamlScalarNode;
+                            if (s != null)
+                            {
+                                long id;
+                                if (long.TryParse(s.Value, out id)) return id;
+                            }
+                        }
+                    }
                 }
             }
             return 0;
