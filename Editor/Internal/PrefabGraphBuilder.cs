@@ -47,7 +47,7 @@ namespace YamlPrefabDiff
                         FileId = d.FileId,
                         ClassId = d.ClassId,
                         TypeName = d.TypeName,
-                        OwnerGameObjectFileId = ReadFileIdRef(map, "m_GameObject") ?? 0
+                        OwnerGameObjectFileId = d.OwnerGameObjectFileId
                     };
                     graph.Components[d.FileId] = ci;
                     if (ci.OwnerGameObjectFileId != 0)
@@ -111,7 +111,7 @@ namespace YamlPrefabDiff
                 }
             }
 
-            // Fallback: any orphan nodes not added (rare malformed) — add as roots
+            // Fallback: any orphan nodes not added (rare malformed) ï¿½ add as roots
             foreach (var n in graph.TransformToNode.Values)
             {
                 if (!graph.Roots.Contains(n) && !graph.TransformToNode.Values.Any(p => p.Children.Contains(n)))

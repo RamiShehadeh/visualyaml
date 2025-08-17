@@ -11,6 +11,8 @@ namespace YamlPrefabDiff
 {
     public class YamlDiffToolWindow : EditorWindow
     {
+        private class CommitInfo { public string Hash; public string Title; public string Author; public string Date; }
+
         private Vector2 _leftScroll;
         private List<AssetDiffEntry> _entries = new();
         private int _selectedIndex = -1;
@@ -28,8 +30,9 @@ namespace YamlPrefabDiff
         private void OnGUI()
         {
             GUILayout.BeginHorizontal(EditorStyles.toolbar);
-            if (GUILayout.Button("Fetch Changed (git diff)", EditorStyles.toolbarButton)) FetchChangedAssets();
+            if (GUILayout.Button("Fetch Git diff", EditorStyles.toolbarButton)) FetchChangedAssets();
             if (GUILayout.Button("Manual Diff (pick two)", EditorStyles.toolbarButton)) ManualFileSelection();
+            if (GUILayout.Button("Compare to commit", EditorStyles.toolbarButton)) ShowCommitPickerForSelected();
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
@@ -89,6 +92,117 @@ namespace YamlPrefabDiff
             var e = _entries[_selectedIndex];
             _treeView = new DiffTreeView(_treeState, e);
         }
+
+        private void ShowCommitPickerForSelected()
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _entries.Count)
+            {
+                EditorUtility.DisplayDialog("YAML Prefab Diff", "Select a prefab on the left first.", "OK");
+                return;
+            }
+            var asset = _entries[_selectedIndex].AssetPath;
+            var repoRoot = Application.dataPath.Replace("/Assets", "");
+            var commits = GetCommitHistory(asset, repoRoot, 50);
+            if (commits.Count == 0)
+            {
+                EditorUtility.DisplayDialog("YAML Prefab Diff", "No commit history found for this file.", "OK");
+                return;
+            }
+
+            // Simple popup window
+            var menu = new GenericMenu();
+            foreach (var c in commits)
+            {
+                var label = $"{c.Hash[..7]}  {c.Title}  ({c.Date})";
+                menu.AddItem(new GUIContent(label), false, () => CompareSelectedToCommit(asset, c.Hash));
+            }
+            menu.ShowAsContext();
+        }
+
+        private void CompareSelectedToCommit(string assetPath, string commitHash)
+        {
+            try
+            {
+                var projectRoot = Application.dataPath.Replace("/Assets", "");
+                // get file at commit
+                var prev = RunGit($"show {commitHash}:{assetPath}", projectRoot).stdout;
+                // get current working copy
+                var full = Path.Combine(projectRoot, assetPath);
+                var cur = File.Exists(full) ? File.ReadAllText(full) : string.Empty;
+
+                var entry = new AssetDiffEntry
+                {
+                    AssetPath = assetPath,
+                    ChangeType = $"Compare to {commitHash[..7]}"
+                };
+
+                var oldDocs = YamlPrefabDiff.UnityYamlParsing.ExtractDocuments(prev);
+                var newDocs = YamlPrefabDiff.UnityYamlParsing.ExtractDocuments(cur);
+                entry.OldGraph = YamlPrefabDiff.PrefabGraphBuilder.Build(oldDocs);
+                entry.NewGraph = YamlPrefabDiff.PrefabGraphBuilder.Build(newDocs);
+                entry.DiffResults = YamlPrefabDiff.DiffEngine.Diff(prev, cur, entry.OldGraph, entry.NewGraph);
+
+                // Insert or replace current selection
+                if (_selectedIndex >= 0 && _selectedIndex < _entries.Count)
+                    _entries[_selectedIndex] = entry;
+                else
+                    _entries.Add(entry);
+
+                BuildTree();
+            }
+            catch (Exception e)
+            {
+                UnityEngine.Debug.LogError($"Compare to commit failed: {e.Message}");
+            }
+        }
+
+        private List<CommitInfo> GetCommitHistory(string assetPath, string repoRoot, int max = 50)
+        {
+            // %h=short hash, %H=hash, %s=subject, %ad=date
+            var args = $"log --follow --max-count={max} --date=short --pretty=format:%H|%s|%ad -- {assetPath}";
+            var (code, stdout, stderr) = RunGit(args, repoRoot);
+            var list = new List<CommitInfo>();
+            if (code != 0) { UnityEngine.Debug.LogError(stderr); return list; }
+
+            var lines = stdout.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var parts = line.Split('|');
+                if (parts.Length >= 3)
+                {
+                    list.Add(new CommitInfo { Hash = parts[0], Title = parts[1], Date = parts[2] });
+                }
+            }
+            return list;
+        }
+
+        // tiny git runner (local to window)
+        private static (int code, string stdout, string stderr) RunGit(string args, string workDir)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = args,
+                    WorkingDirectory = workDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var p = System.Diagnostics.Process.Start(psi);
+                string so = p.StandardOutput.ReadToEnd();
+                string se = p.StandardError.ReadToEnd();
+                p.WaitForExit();
+                return (p.ExitCode, so, se);
+            }
+            catch (Exception e)
+            {
+                return (-1, "", e.Message);
+            }
+        }
+
 
         private void FetchChangedAssets()
         {

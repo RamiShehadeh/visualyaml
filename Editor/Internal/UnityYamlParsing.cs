@@ -5,6 +5,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using YamlDotNet.RepresentationModel;
+using UnityEditor;
 
 namespace YamlPrefabDiff
 {
@@ -15,6 +16,8 @@ namespace YamlPrefabDiff
         public string TypeName;    // e.g. GameObject, Transform, MonoBehaviour, etc.
         public string RawText;     // entire document text (without leading directives)
         public YamlDocument Yaml;  // parsed doc (YamlDotNet)
+        public long OwnerGameObjectFileId;  
+        public string ScriptGuid; 
     }
 
     internal static class UnityYamlParsing
@@ -90,10 +93,45 @@ namespace YamlPrefabDiff
             }
             if (ys.Documents.Count == 0) return null;
 
-            // Resolve MonoBehaviour to script name when possible
-            if (string.Equals(typeName, "MonoBehaviour", StringComparison.OrdinalIgnoreCase))
+            // get the top mapping
+            var topMap = ys.Documents[0].RootNode as YamlMappingNode;
+            YamlMappingNode map = null;
+            if (topMap != null && topMap.Children.TryGetValue(new YamlScalarNode(typeName), out var tv) && tv is YamlMappingNode m0)
+                map = m0;
+
+            // capture owner GO fileID if present (for components)
+            long ownerGo = 0;
+            if (map != null && map.Children.TryGetValue(new YamlScalarNode("m_GameObject"), out var goRef) && goRef is YamlMappingNode goMap)
             {
-                typeName = TryResolveMonoScriptName(textForParsing) ?? "MonoBehaviour";
+                if (goMap.Children.TryGetValue(new YamlScalarNode("fileID"), out var idNode) && idNode is YamlScalarNode s && long.TryParse(s.Value, out var id))
+                    ownerGo = id;
+            }
+
+            // resolve MonoBehaviour -> C# class (prefer MonoScript.GetClass)
+            string scriptGuid = null;
+            if (string.Equals(typeName, "MonoBehaviour", StringComparison.OrdinalIgnoreCase) && map != null)
+            {
+                if (map.Children.TryGetValue(new YamlScalarNode("m_Script"), out var sRef) && sRef is YamlMappingNode sMap)
+                {
+                    if (sMap.Children.TryGetValue(new YamlScalarNode("guid"), out var gNode) && gNode is YamlScalarNode gScalar)
+                        scriptGuid = gScalar.Value;
+                }
+
+                if (!string.IsNullOrEmpty(scriptGuid))
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(scriptGuid);
+                    var ms = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
+                    var klass = ms != null ? ms.GetClass() : null;
+                    if (klass != null)
+                        typeName = string.IsNullOrEmpty(klass.Namespace) ? klass.Name : $"{klass.Namespace}.{klass.Name}";
+                    else
+                        typeName = Path.GetFileNameWithoutExtension(path); // fallback to file name
+                }
+                else
+                {
+                    // last-resort fallback to previous heuristic
+                    typeName = TryResolveMonoScriptName(textForParsing) ?? "MonoBehaviour";
+                }
             }
 
             return new UnityYamlDocument
@@ -102,7 +140,9 @@ namespace YamlPrefabDiff
                 FileId = fileId,
                 TypeName = typeName,
                 RawText = docText,
-                Yaml = ys.Documents[0]
+                Yaml = ys.Documents[0],
+                OwnerGameObjectFileId = ownerGo,
+                ScriptGuid = scriptGuid
             };
         }
 
