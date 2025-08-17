@@ -19,7 +19,7 @@ namespace YamlPrefabDiff
 
         private class CommitInfo { public string Hash; public string Title; public string Date; }
 
-        [MenuItem("Window/YAML Prefab/Scene Diff")]
+        [MenuItem("Tools/YAML Diff Tool")]
         public static void ShowWindow() { GetWindow<YamlDiffToolWindow>("YAML Diff"); }
 
         private void OnEnable()
