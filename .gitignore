@@ -5,3 +5,8 @@
 *.csproj
 *.sln
 *.userprefs
+
+# macOS specific
+.DS_Store
+*.DS_Store
+._*
