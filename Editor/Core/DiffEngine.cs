@@ -88,7 +88,8 @@ namespace VisualYAML
                     HierarchyPath = ResolveHierarchyPath(od.FileId, oldGraph, od.TypeName),
                     FieldPath = "<document>",
                     OldValue = TrimValue(od.RawText),
-                    OwnerGameObject = ResolveOwnerName(od.FileId, oldGraph)
+                    OwnerGameObject = ResolveOwnerName(od.FileId, oldGraph),
+                    IsDocumentLevel = true
                 });
             }
 
@@ -107,7 +108,8 @@ namespace VisualYAML
                     HierarchyPath = ResolveHierarchyPath(nd.FileId, newGraph, nd.TypeName),
                     FieldPath = "<document>",
                     NewValue = TrimValue(nd.RawText),
-                    OwnerGameObject = ResolveOwnerName(nd.FileId, newGraph)
+                    OwnerGameObject = ResolveOwnerName(nd.FileId, newGraph),
+                    IsDocumentLevel = true
                 });
             }
 

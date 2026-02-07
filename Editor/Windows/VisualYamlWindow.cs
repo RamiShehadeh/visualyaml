@@ -26,10 +26,24 @@ namespace VisualYAML
         private const float SplitHandleWidth = 5f;
 
         // Asset list layout
-        private const float AssetRowHeight = 22f;
+        private const float AssetRowHeight = 26f;
         private const float AssetIconSize = 18f;
-        private const float AssetBadgeWidth = 30f;
-        private const float AssetStatusWidth = 80f;
+        private const float AssetBadgeWidth = 34f;
+        private const float AssetStatusWidth = 70f;
+
+        // Colors matching the tree view
+        private static readonly Color SelectionColor = new Color(0.24f, 0.48f, 0.9f, 0.35f);
+        private static readonly Color HoverColor = new Color(0.5f, 0.5f, 0.5f, 0.12f);
+        private static readonly Color StatusAddedColor = new Color(0.40f, 0.87f, 0.55f);
+        private static readonly Color StatusModifiedColor = new Color(0.95f, 0.82f, 0.40f);
+        private static readonly Color StatusDeletedColor = new Color(0.95f, 0.50f, 0.45f);
+        private static readonly Color StatusRenamedColor = new Color(0.55f, 0.75f, 0.95f);
+        private static readonly Color DimColor = new Color(0.55f, 0.55f, 0.55f);
+
+        private GUIStyle _statusStyle;
+        private GUIStyle _badgeLabelStyle;
+        private GUIStyle _headerPathStyle;
+        private GUIStyle _headerStatusStyle;
 
         [MenuItem("Tools/Visual YAML/Diff Tool")]
         public static void ShowWindow()
@@ -163,22 +177,70 @@ namespace VisualYAML
             }
         }
 
+        // --- Styles ---
+
+        private void EnsureWindowStyles()
+        {
+            if (_statusStyle != null) return;
+
+            _statusStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontStyle = FontStyle.Bold,
+                fontSize = 10,
+                alignment = TextAnchor.MiddleRight,
+                clipping = TextClipping.Clip
+            };
+            _badgeLabelStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = DimColor },
+                fontSize = 10
+            };
+            _headerPathStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                fontSize = 12,
+                clipping = TextClipping.Clip
+            };
+            _headerStatusStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                fontStyle = FontStyle.Bold,
+                fontSize = 11,
+                alignment = TextAnchor.MiddleLeft
+            };
+        }
+
+        private static Color GetStatusColor(string changeType)
+        {
+            if (string.IsNullOrEmpty(changeType)) return DimColor;
+            switch (changeType)
+            {
+                case "Added": return StatusAddedColor;
+                case "Modified": return StatusModifiedColor;
+                case "Deleted": return StatusDeletedColor;
+                case "Renamed": return StatusRenamedColor;
+                default: return DimColor;
+            }
+        }
+
         // --- Left Panel: Asset List (pure Rect-based) ---
 
         private void DrawAssetList(Rect rect)
         {
+            EnsureWindowStyles();
             GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
 
             var innerRect = new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
 
             if (_entries.Count == 0)
             {
-                EditorGUI.HelpBox(innerRect, "Click \"Fetch Changes\" to detect changed YAML assets from Git.", MessageType.Info);
+                // Empty state with centered message
+                var msgRect = new Rect(innerRect.x + 8, innerRect.y + innerRect.height * 0.3f, innerRect.width - 16, 60);
+                EditorGUI.HelpBox(msgRect, "Click \"Fetch Changes\" to detect changed YAML assets from Git.", MessageType.Info);
                 return;
             }
 
             float contentHeight = _entries.Count * AssetRowHeight;
-            var viewRect = new Rect(0, 0, innerRect.width - 16, contentHeight);
+            var viewRect = new Rect(0, 0, innerRect.width - 14, contentHeight);
 
             _leftScroll = GUI.BeginScrollView(innerRect, _leftScroll, viewRect);
 
@@ -188,37 +250,53 @@ namespace VisualYAML
                 var isSelected = _selectedIndex == i;
                 var rowRect = new Rect(0, i * AssetRowHeight, viewRect.width, AssetRowHeight);
 
-                // Selection highlight
+                // Selection / hover background
                 if (isSelected)
-                    EditorGUI.DrawRect(rowRect, new Color(0.24f, 0.48f, 0.9f, 0.3f));
+                    EditorGUI.DrawRect(rowRect, SelectionColor);
+                else if (rowRect.Contains(Event.current.mousePosition))
+                    EditorGUI.DrawRect(rowRect, HoverColor);
 
-                // Hover highlight
-                if (!isSelected && rowRect.Contains(Event.current.mousePosition))
-                    EditorGUI.DrawRect(rowRect, new Color(0.5f, 0.5f, 0.5f, 0.1f));
+                // Left color strip for change type
+                var stripColor = GetStatusColor(e.ChangeType);
+                EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.y, 3f, rowRect.height), stripColor);
 
-                float x = rowRect.x + 4;
+                float x = rowRect.x + 8;
 
                 // File icon
                 var icon = GetFileIcon(e.AssetPath);
                 if (icon != null)
-                    GUI.DrawTexture(new Rect(x, rowRect.y + 2, AssetIconSize, AssetIconSize), icon, ScaleMode.ScaleToFit);
-                x += AssetIconSize + 4;
+                {
+                    float iconY = rowRect.y + (rowRect.height - AssetIconSize) * 0.5f;
+                    GUI.DrawTexture(new Rect(x, iconY, AssetIconSize, AssetIconSize), icon, ScaleMode.ScaleToFit);
+                }
+                x += AssetIconSize + 6;
 
                 // File name
-                float nameWidth = Mathf.Max(60, rowRect.width - AssetIconSize - AssetBadgeWidth - AssetStatusWidth - 16);
+                float statusAndBadge = AssetStatusWidth + AssetBadgeWidth + 8;
+                float nameWidth = Mathf.Max(40, rowRect.width - x - statusAndBadge);
                 EditorGUI.LabelField(new Rect(x, rowRect.y, nameWidth, rowRect.height), Path.GetFileName(e.AssetPath));
-                x += nameWidth;
 
-                // Change count badge
+                // Change count badge (right-aligned, before status)
                 int changeCount = e.DiffResults != null ? e.DiffResults.Count : 0;
-                if (changeCount > 0)
-                    EditorGUI.LabelField(new Rect(x, rowRect.y, AssetBadgeWidth, rowRect.height),
-                        changeCount.ToString(), EditorStyles.miniBoldLabel);
-                x += AssetBadgeWidth;
+                float rightX = rowRect.xMax;
 
-                // Status label
-                EditorGUI.LabelField(new Rect(x, rowRect.y, AssetStatusWidth, rowRect.height),
-                    e.ChangeType, EditorStyles.miniLabel);
+                // Status label (colored)
+                rightX -= AssetStatusWidth + 2;
+                _statusStyle.normal.textColor = stripColor;
+                EditorGUI.LabelField(new Rect(rightX, rowRect.y, AssetStatusWidth, rowRect.height),
+                    e.ChangeType, _statusStyle);
+
+                // Badge
+                if (changeCount > 0)
+                {
+                    rightX -= AssetBadgeWidth;
+                    EditorGUI.LabelField(new Rect(rightX, rowRect.y, AssetBadgeWidth, rowRect.height),
+                        changeCount.ToString(), _badgeLabelStyle);
+                }
+
+                // Separator line
+                EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.yMax - 1, rowRect.width, 1),
+                    new Color(0.2f, 0.2f, 0.2f, 0.3f));
 
                 // Click to select
                 if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition))
@@ -237,28 +315,43 @@ namespace VisualYAML
 
         private void DrawDiffPanel(Rect rect)
         {
+            EnsureWindowStyles();
+
             if (_selectedIndex < 0 || _selectedIndex >= _entries.Count)
             {
-                EditorGUI.HelpBox(rect, "Select an asset on the left to view its diff.", MessageType.Info);
+                var msgRect = new Rect(rect.x + 20, rect.y + rect.height * 0.35f, rect.width - 40, 60);
+                EditorGUI.HelpBox(msgRect, "Select an asset on the left to view its diff.", MessageType.Info);
                 return;
             }
 
             var e = _entries[_selectedIndex];
-            float y = rect.y;
+            float y = rect.y + 4;
 
-            // Asset path label
-            EditorGUI.LabelField(new Rect(rect.x, y, rect.width, 20), e.AssetPath, EditorStyles.boldLabel);
-            y += 20;
+            // Header: file path + status
+            float pathWidth = rect.width - 200;
+            EditorGUI.LabelField(new Rect(rect.x + 4, y, pathWidth, 20), e.AssetPath, _headerPathStyle);
 
-            // Status + expand/collapse buttons
-            EditorGUI.LabelField(new Rect(rect.x, y, 200, 18), e.ChangeType, EditorStyles.miniBoldLabel);
+            // Status colored badge in header
+            _headerStatusStyle.normal.textColor = GetStatusColor(e.ChangeType);
+            EditorGUI.LabelField(new Rect(rect.x + 4 + pathWidth, y, 100, 20), e.ChangeType, _headerStatusStyle);
+            y += 24;
 
-            float btnX = rect.xMax - 158;
-            if (GUI.Button(new Rect(btnX, y, 74, 18), "Expand All", EditorStyles.miniButtonLeft))
+            // Summary + buttons bar
+            int totalChanges = e.DiffResults != null ? e.DiffResults.Count : 0;
+            string summary = totalChanges == 1 ? "1 change" : totalChanges + " changes";
+            EditorGUI.LabelField(new Rect(rect.x + 4, y, 200, 18), summary,
+                new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = DimColor } });
+
+            float btnX = rect.xMax - 166;
+            if (GUI.Button(new Rect(btnX, y, 78, 18), "Expand All", EditorStyles.miniButtonLeft))
                 _treeView?.ExpandAll();
-            if (GUI.Button(new Rect(btnX + 74, y, 84, 18), "Collapse All", EditorStyles.miniButtonRight))
+            if (GUI.Button(new Rect(btnX + 78, y, 88, 18), "Collapse All", EditorStyles.miniButtonRight))
                 _treeView?.CollapseAll();
             y += 22;
+
+            // Separator line
+            EditorGUI.DrawRect(new Rect(rect.x, y, rect.width, 1), new Color(0.3f, 0.3f, 0.3f, 0.5f));
+            y += 2;
 
             // Tree view fills remaining space
             var treeRect = new Rect(rect.x, y, rect.width, Mathf.Max(0, rect.yMax - y));

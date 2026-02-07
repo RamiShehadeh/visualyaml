@@ -25,6 +25,7 @@ namespace VisualYAML
         public long? DocFileId;
         public int? ClassId;
         public string OwnerGameObject;
+        public bool IsDocumentLevel;     // true if this is a whole-document add/remove (not a field diff)
     }
 
     [Serializable]
