@@ -25,6 +25,12 @@ namespace VisualYAML
         private const float SplitMinRight = 400f;
         private const float SplitHandleWidth = 5f;
 
+        // Asset list layout
+        private const float AssetRowHeight = 22f;
+        private const float AssetIconSize = 18f;
+        private const float AssetBadgeWidth = 30f;
+        private const float AssetStatusWidth = 80f;
+
         [MenuItem("Tools/Visual YAML/Diff Tool")]
         public static void ShowWindow()
         {
@@ -45,18 +51,43 @@ namespace VisualYAML
 
         private void OnGUI()
         {
+            // Toolbar uses GUILayout — self-contained, no mixing
             DrawToolbar();
-            GUILayout.Space(2);
-            DrawSplitPanel();
+
+            // Everything below is pure Rect-based (no GUILayout) to avoid
+            // Layout/Repaint control-count mismatches from BeginArea/GetRect
+            float toolbarH = EditorStyles.toolbar.fixedHeight;
+            if (toolbarH < 1) toolbarH = 20f;
+            float contentY = toolbarH + 2f;
+            var contentRect = new Rect(0, contentY, position.width, position.height - contentY);
+
+            if (contentRect.height < 10 || contentRect.width < 10) return;
+
+            // Compute split rects
+            float maxSplit = Mathf.Max(SplitMinLeft, contentRect.width - SplitMinRight);
+            _splitX = Mathf.Clamp(_splitX, SplitMinLeft, maxSplit);
+
+            var leftRect = new Rect(contentRect.x, contentRect.y, _splitX, contentRect.height);
+            var handleRect = new Rect(contentRect.x + _splitX, contentRect.y, SplitHandleWidth, contentRect.height);
+            var rightRect = new Rect(contentRect.x + _splitX + SplitHandleWidth, contentRect.y,
+                Mathf.Max(0, contentRect.width - _splitX - SplitHandleWidth), contentRect.height);
+
+            // Split handle interaction
+            EditorGUIUtility.AddCursorRect(handleRect, MouseCursor.ResizeHorizontal);
+            HandleSplitDrag(contentRect, maxSplit);
+            EditorGUI.DrawRect(handleRect, new Color(0.15f, 0.15f, 0.15f, 0.3f));
+
+            // Draw panels — pure Rect-based
+            DrawAssetList(leftRect);
+            DrawDiffPanel(rightRect);
         }
 
-        // --- Toolbar ---
+        // --- Toolbar (GUILayout, self-contained) ---
 
         private void DrawToolbar()
         {
             GUILayout.BeginHorizontal(EditorStyles.toolbar);
 
-            // Compare mode dropdown
             var modeLabel = "Source: " + CompareModeLabel(_compareMode);
             if (EditorGUILayout.DropdownButton(new GUIContent(modeLabel), FocusType.Passive, EditorStyles.toolbarDropDown, GUILayout.Width(180)))
             {
@@ -78,7 +109,6 @@ namespace VisualYAML
 
             GUILayout.FlexibleSpace();
 
-            // Search field
             var newSearch = EditorGUILayout.TextField(_pendingSearch, EditorStyles.toolbarSearchField, GUILayout.Width(200));
             if (newSearch != _pendingSearch)
             {
@@ -103,33 +133,24 @@ namespace VisualYAML
             }
         }
 
-        // --- Split Panel ---
+        // --- Split handle dragging ---
 
-        private void DrawSplitPanel()
+        private void HandleSplitDrag(Rect contentRect, float maxSplit)
         {
-            var fullRect = GUILayoutUtility.GetRect(0, 0, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-
-            // Clamp split — guard against zero-width rect during Layout pass
-            float maxSplit = Mathf.Max(SplitMinLeft, fullRect.width - SplitMinRight);
-            _splitX = Mathf.Clamp(_splitX, SplitMinLeft, maxSplit);
-
-            var leftRect = new Rect(fullRect.x, fullRect.y, _splitX, fullRect.height);
-            var handleRect = new Rect(fullRect.x + _splitX, fullRect.y, SplitHandleWidth, fullRect.height);
-            var rightRect = new Rect(fullRect.x + _splitX + SplitHandleWidth, fullRect.y,
-                Mathf.Max(0, fullRect.width - _splitX - SplitHandleWidth), fullRect.height);
-
-            // Handle dragging
-            EditorGUIUtility.AddCursorRect(handleRect, MouseCursor.ResizeHorizontal);
-            if (Event.current.type == EventType.MouseDown && handleRect.Contains(Event.current.mousePosition))
+            if (Event.current.type == EventType.MouseDown)
             {
-                _draggingSplit = true;
-                Event.current.Use();
+                var handleRect = new Rect(contentRect.x + _splitX, contentRect.y, SplitHandleWidth, contentRect.height);
+                if (handleRect.Contains(Event.current.mousePosition))
+                {
+                    _draggingSplit = true;
+                    Event.current.Use();
+                }
             }
             if (_draggingSplit)
             {
                 if (Event.current.type == EventType.MouseDrag)
                 {
-                    _splitX = Event.current.mousePosition.x - fullRect.x;
+                    _splitX = Event.current.mousePosition.x - contentRect.x;
                     _splitX = Mathf.Clamp(_splitX, SplitMinLeft, maxSplit);
                     Event.current.Use();
                     Repaint();
@@ -140,96 +161,109 @@ namespace VisualYAML
                     Event.current.Use();
                 }
             }
-
-            // Draw handle
-            EditorGUI.DrawRect(handleRect, new Color(0.15f, 0.15f, 0.15f, 0.3f));
-
-            DrawAssetList(leftRect);
-            DrawDiffPanel(rightRect);
         }
 
-        // --- Left Panel: Asset List ---
+        // --- Left Panel: Asset List (pure Rect-based) ---
 
         private void DrawAssetList(Rect rect)
         {
-            GUILayout.BeginArea(rect, EditorStyles.helpBox);
-            _leftScroll = GUILayout.BeginScrollView(_leftScroll);
+            GUI.Box(rect, GUIContent.none, EditorStyles.helpBox);
+
+            var innerRect = new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
 
             if (_entries.Count == 0)
             {
-                EditorGUILayout.HelpBox("Click \"Fetch Changes\" to detect changed YAML assets from Git.", MessageType.Info);
+                EditorGUI.HelpBox(innerRect, "Click \"Fetch Changes\" to detect changed YAML assets from Git.", MessageType.Info);
+                return;
             }
+
+            float contentHeight = _entries.Count * AssetRowHeight;
+            var viewRect = new Rect(0, 0, innerRect.width - 16, contentHeight);
+
+            _leftScroll = GUI.BeginScrollView(innerRect, _leftScroll, viewRect);
 
             for (int i = 0; i < _entries.Count; i++)
             {
                 var e = _entries[i];
                 var isSelected = _selectedIndex == i;
+                var rowRect = new Rect(0, i * AssetRowHeight, viewRect.width, AssetRowHeight);
 
-                GUILayout.BeginHorizontal();
+                // Selection highlight
+                if (isSelected)
+                    EditorGUI.DrawRect(rowRect, new Color(0.24f, 0.48f, 0.9f, 0.3f));
 
-                // File icon — always reserve space to keep GUILayout control count consistent
+                // Hover highlight
+                if (!isSelected && rowRect.Contains(Event.current.mousePosition))
+                    EditorGUI.DrawRect(rowRect, new Color(0.5f, 0.5f, 0.5f, 0.1f));
+
+                float x = rowRect.x + 4;
+
+                // File icon
                 var icon = GetFileIcon(e.AssetPath);
-                GUILayout.Label(icon != null ? new GUIContent(icon) : GUIContent.none,
-                    GUILayout.Width(18), GUILayout.Height(18));
+                if (icon != null)
+                    GUI.DrawTexture(new Rect(x, rowRect.y + 2, AssetIconSize, AssetIconSize), icon, ScaleMode.ScaleToFit);
+                x += AssetIconSize + 4;
 
-                // Selection toggle
-                bool pressed = GUILayout.Toggle(isSelected, Path.GetFileName(e.AssetPath), "Button");
+                // File name
+                float nameWidth = Mathf.Max(60, rowRect.width - AssetIconSize - AssetBadgeWidth - AssetStatusWidth - 16);
+                EditorGUI.LabelField(new Rect(x, rowRect.y, nameWidth, rowRect.height), Path.GetFileName(e.AssetPath));
+                x += nameWidth;
 
                 // Change count badge
                 int changeCount = e.DiffResults != null ? e.DiffResults.Count : 0;
-                var badge = changeCount > 0 ? changeCount.ToString() : "";
-                GUILayout.Label(badge, EditorStyles.miniBoldLabel, GUILayout.Width(30));
+                if (changeCount > 0)
+                    EditorGUI.LabelField(new Rect(x, rowRect.y, AssetBadgeWidth, rowRect.height),
+                        changeCount.ToString(), EditorStyles.miniBoldLabel);
+                x += AssetBadgeWidth;
 
                 // Status label
-                GUILayout.Label(e.ChangeType, EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUI.LabelField(new Rect(x, rowRect.y, AssetStatusWidth, rowRect.height),
+                    e.ChangeType, EditorStyles.miniLabel);
 
-                GUILayout.EndHorizontal();
-
-                if (pressed && !isSelected)
+                // Click to select
+                if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition))
                 {
                     _selectedIndex = i;
                     RebuildTree();
+                    Event.current.Use();
+                    Repaint();
                 }
             }
 
-            GUILayout.EndScrollView();
-            GUILayout.EndArea();
+            GUI.EndScrollView();
         }
 
-        // --- Right Panel: Diff View ---
+        // --- Right Panel: Diff View (pure Rect-based) ---
 
         private void DrawDiffPanel(Rect rect)
         {
-            GUILayout.BeginArea(rect);
-
             if (_selectedIndex < 0 || _selectedIndex >= _entries.Count)
             {
-                EditorGUILayout.HelpBox("Select an asset on the left to view its diff.", MessageType.Info);
-                GUILayout.EndArea();
+                EditorGUI.HelpBox(rect, "Select an asset on the left to view its diff.", MessageType.Info);
                 return;
             }
 
             var e = _entries[_selectedIndex];
-            GUILayout.Label(e.AssetPath, EditorStyles.boldLabel);
+            float y = rect.y;
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(e.ChangeType, EditorStyles.miniBoldLabel);
-            GUILayout.FlexibleSpace();
+            // Asset path label
+            EditorGUI.LabelField(new Rect(rect.x, y, rect.width, 20), e.AssetPath, EditorStyles.boldLabel);
+            y += 20;
 
-            if (GUILayout.Button("Expand All", EditorStyles.miniButtonLeft, GUILayout.Width(70)))
+            // Status + expand/collapse buttons
+            EditorGUI.LabelField(new Rect(rect.x, y, 200, 18), e.ChangeType, EditorStyles.miniBoldLabel);
+
+            float btnX = rect.xMax - 158;
+            if (GUI.Button(new Rect(btnX, y, 74, 18), "Expand All", EditorStyles.miniButtonLeft))
                 _treeView?.ExpandAll();
-            if (GUILayout.Button("Collapse All", EditorStyles.miniButtonRight, GUILayout.Width(80)))
+            if (GUI.Button(new Rect(btnX + 74, y, 84, 18), "Collapse All", EditorStyles.miniButtonRight))
                 _treeView?.CollapseAll();
+            y += 22;
 
-            GUILayout.EndHorizontal();
-            GUILayout.Space(4);
-
-            // Use ExpandHeight to fill remaining area instead of hardcoded offset
-            var treeRect = GUILayoutUtility.GetRect(0, 0, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+            // Tree view fills remaining space
+            var treeRect = new Rect(rect.x, y, rect.width, Mathf.Max(0, rect.yMax - y));
             if (_treeView != null && treeRect.height > 1)
                 _treeView.OnGUI(treeRect);
-
-            GUILayout.EndArea();
         }
 
         private void RebuildTree()
