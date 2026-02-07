@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
@@ -16,12 +17,16 @@ namespace VisualYAML
         public int ChangeCount;              // total field-level changes under this node
         public bool IsWholeObjectChange;     // true when the entire GO/component was added or removed
         public List<DiffResult> AllChanges;  // all changes under this group (for component/GO summary)
+        public string Tooltip;               // tooltip with full value for truncated display
     }
 
     internal class DiffTreeView : TreeView
     {
         private readonly AssetDiffEntry _entry;
         private readonly string _searchFilter;
+
+        // GUID regex for detecting clickable asset refs
+        private static readonly Regex GuidPattern = new Regex(@"\b([0-9a-fA-F]{32})\b", RegexOptions.Compiled);
 
         // Styles (lazy initialized)
         private GUIStyle _badgeStyleAdded;
@@ -31,13 +36,14 @@ namespace VisualYAML
         private GUIStyle _valueStyleOld;
         private GUIStyle _valueStyleNew;
         private GUIStyle _arrowStyle;
-        private GUIStyle _componentLabelStyle;
+        private GUIStyle _fieldLabelStyle;
+        private GUIStyle _linkStyle;
         private bool _stylesReady;
 
         // Colors
-        private static readonly Color AddedBg = new Color(0.18f, 0.56f, 0.34f, 0.25f);
-        private static readonly Color RemovedBg = new Color(0.62f, 0.22f, 0.20f, 0.25f);
-        private static readonly Color ModifiedBg = new Color(0.60f, 0.52f, 0.20f, 0.18f);
+        private static readonly Color AddedBg = new Color(0.18f, 0.56f, 0.34f, 0.20f);
+        private static readonly Color RemovedBg = new Color(0.62f, 0.22f, 0.20f, 0.20f);
+        private static readonly Color ModifiedBg = new Color(0.60f, 0.52f, 0.20f, 0.14f);
         private static readonly Color AddedText = new Color(0.40f, 0.87f, 0.55f);
         private static readonly Color RemovedText = new Color(0.95f, 0.50f, 0.45f);
         private static readonly Color ModifiedText = new Color(0.95f, 0.82f, 0.40f);
@@ -45,6 +51,11 @@ namespace VisualYAML
         private static readonly Color StripRemoved = new Color(0.88f, 0.35f, 0.31f);
         private static readonly Color StripModified = new Color(0.90f, 0.76f, 0.31f);
         private static readonly Color DimText = new Color(0.6f, 0.6f, 0.6f);
+        private static readonly Color LinkColor = new Color(0.45f, 0.70f, 1.0f);
+
+        // Column layout ratios
+        private const float BadgeWidth = 80f;
+        private const float ValueColumnRatio = 0.45f; // 45% of row for values
 
         public DiffTreeView(TreeViewState state, AssetDiffEntry entry, string searchFilter = null) : base(state)
         {
@@ -85,14 +96,20 @@ namespace VisualYAML
             {
                 normal = { textColor = DimText },
                 alignment = TextAnchor.MiddleCenter,
-                fontSize = 11
+                fontSize = 12
             };
-            _componentLabelStyle = new GUIStyle(EditorStyles.miniLabel)
+            _fieldLabelStyle = new GUIStyle(EditorStyles.label)
             {
-                normal = { textColor = new Color(0.75f, 0.75f, 0.75f) },
-                fontStyle = FontStyle.Italic,
+                clipping = TextClipping.Clip,
+                fontSize = 12
+            };
+            _linkStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                normal = { textColor = LinkColor },
+                hover = { textColor = new Color(0.55f, 0.80f, 1.0f) },
                 alignment = TextAnchor.MiddleLeft,
-                fontSize = 11
+                fontSize = 11,
+                fontStyle = FontStyle.Normal
             };
         }
 
@@ -181,7 +198,7 @@ namespace VisualYAML
                 };
                 root.AddChild(goItem);
 
-                // If the entire GO was added/removed, show a single summary line instead of expanding every component
+                // If the entire GO was added/removed, show a single summary line
                 if (goIsWholeAdd || goIsWholeRemove)
                 {
                     var componentTypes = goChanges
@@ -241,15 +258,19 @@ namespace VisualYAML
                         .Where(c => !c.IsDocumentLevel)
                         .OrderBy(c => c.FieldPath))
                     {
+                        var prettyPath = PrettyFieldPath(ch.FieldPath, ch.ComponentType);
+                        var tooltip = BuildTooltip(ch);
+
                         compItem.AddChild(new DiffTreeItem
                         {
                             id = nextId++,
                             depth = 2,
-                            displayName = PrettyFieldPath(ch.FieldPath, ch.ComponentType),
+                            displayName = prettyPath,
                             Kind = DiffTreeNodeKind.Field,
                             FieldChange = ch,
                             ChangeType = ch.ChangeType,
-                            ChangeCount = 1
+                            ChangeCount = 1,
+                            Tooltip = tooltip
                         });
                     }
                 }
@@ -270,7 +291,7 @@ namespace VisualYAML
             var item = (DiffTreeItem)args.item;
             var row = args.rowRect;
 
-            // Background tint for the whole row based on change type
+            // Background tint
             if (!string.IsNullOrEmpty(item.ChangeType))
             {
                 var bgColor = GetRowBackground(item.ChangeType);
@@ -285,30 +306,31 @@ namespace VisualYAML
                 EditorGUI.DrawRect(strip, GetStripColor(item.ChangeType));
             }
 
-            // Draw the default label (handles indentation and fold arrows)
+            // Draw the default TreeView label (handles indentation and fold arrows)
             base.RowGUI(args);
 
-            float indent = GetContentIndent(item);
+            // Tooltip on hover
+            if (!string.IsNullOrEmpty(item.Tooltip) && row.Contains(Event.current.mousePosition))
+            {
+                GUI.Label(row, new GUIContent("", item.Tooltip));
+            }
 
             switch (item.Kind)
             {
                 case DiffTreeNodeKind.GameObject:
-                    DrawGameObjectRow(item, row, indent);
+                    DrawGameObjectRow(item, row);
                     break;
-
                 case DiffTreeNodeKind.Component:
-                    DrawComponentRow(item, row, indent);
+                    DrawComponentRow(item, row);
                     break;
-
                 case DiffTreeNodeKind.Field:
-                    DrawFieldRow(item, row, indent);
+                    DrawFieldRow(item, row);
                     break;
             }
         }
 
-        private void DrawGameObjectRow(DiffTreeItem item, Rect row, float indent)
+        private void DrawGameObjectRow(DiffTreeItem item, Rect row)
         {
-            // Right side: badge
             if (item.IsWholeObjectChange)
             {
                 DrawBadge(row, item.ChangeType == "added" ? "Added" : "Removed", GetBadgeStyle(item.ChangeType));
@@ -320,36 +342,35 @@ namespace VisualYAML
             }
         }
 
-        private void DrawComponentRow(DiffTreeItem item, Rect row, float indent)
+        private void DrawComponentRow(DiffTreeItem item, Rect row)
         {
             if (item.IsWholeObjectChange)
             {
-                // For the summary line under a whole-object GO, show "Components" dimmed label
                 DrawBadge(row, item.ChangeType == "added" ? "Added" : "Removed", GetBadgeStyle(item.ChangeType));
             }
             else
             {
-                // Show change summary
                 string badge = SummarizeComponentBadge(item);
                 DrawBadge(row, badge, GetBadgeStyle(item.ChangeType));
             }
         }
 
-        private void DrawFieldRow(DiffTreeItem item, Rect row, float indent)
+        private void DrawFieldRow(DiffTreeItem item, Rect row)
         {
             if (item.FieldChange == null) return;
 
             var d = item.FieldChange;
-            float labelWidth = indent + 220f;
-            float badgeWidth = 80f;
-            float valueAreaStart = Mathf.Min(labelWidth, row.width * 0.35f);
-            float valueAreaEnd = row.xMax - badgeWidth - 8f;
-            float valueWidth = valueAreaEnd - (row.x + valueAreaStart);
 
-            if (valueWidth > 80f)
+            // Column layout: [label area | value area | badge]
+            // The label is already drawn by base.RowGUI, so we position values AFTER it
+            float valueStart = row.x + row.width * (1f - ValueColumnRatio) - BadgeWidth * 0.5f;
+            float valueEnd = row.xMax - BadgeWidth - 4f;
+            float valueWidth = valueEnd - valueStart;
+
+            if (valueWidth > 60f)
             {
-                var valueRect = new Rect(row.x + valueAreaStart, row.y, valueWidth, row.height);
-                DrawValuePreview(valueRect, d);
+                var valueRect = new Rect(valueStart, row.y, valueWidth, row.height);
+                DrawValuePreview(valueRect, d, row);
             }
 
             // Badge on right
@@ -363,26 +384,25 @@ namespace VisualYAML
             DrawBadge(row, badge, GetBadgeStyle(d.ChangeType));
         }
 
-        private void DrawValuePreview(Rect rect, DiffResult d)
+        private void DrawValuePreview(Rect rect, DiffResult d, Rect fullRow)
         {
-            string oldVal = LimitValue(d.OldValue, 80);
-            string newVal = LimitValue(d.NewValue, 80);
+            string oldVal = LimitValue(d.OldValue, 60);
+            string newVal = LimitValue(d.NewValue, 60);
 
             switch (d.ChangeType)
             {
                 case "added":
-                    EditorGUI.LabelField(rect, newVal, _valueStyleNew);
+                    DrawValueWithLinks(rect, newVal, _valueStyleNew, d.NewValue, fullRow);
                     break;
 
                 case "removed":
-                    EditorGUI.LabelField(rect, oldVal, _valueStyleOld);
+                    DrawValueWithLinks(rect, oldVal, _valueStyleOld, d.OldValue, fullRow);
                     break;
 
                 default: // modified
                     if (!string.IsNullOrEmpty(oldVal) && !string.IsNullOrEmpty(newVal))
                     {
-                        // Show: oldValue → newValue
-                        float arrowWidth = 22f;
+                        float arrowWidth = 20f;
                         float halfWidth = (rect.width - arrowWidth) * 0.5f;
 
                         if (halfWidth > 30f)
@@ -391,9 +411,9 @@ namespace VisualYAML
                             var arrowRect = new Rect(rect.x + halfWidth, rect.y, arrowWidth, rect.height);
                             var newRect = new Rect(rect.x + halfWidth + arrowWidth, rect.y, halfWidth, rect.height);
 
-                            EditorGUI.LabelField(oldRect, oldVal, _valueStyleOld);
+                            DrawValueWithLinks(oldRect, oldVal, _valueStyleOld, d.OldValue, fullRow);
                             EditorGUI.LabelField(arrowRect, "\u2192", _arrowStyle);
-                            EditorGUI.LabelField(newRect, newVal, _valueStyleNew);
+                            DrawValueWithLinks(newRect, newVal, _valueStyleNew, d.NewValue, fullRow);
                         }
                         else
                         {
@@ -402,17 +422,51 @@ namespace VisualYAML
                     }
                     else if (!string.IsNullOrEmpty(newVal))
                     {
-                        EditorGUI.LabelField(rect, newVal, _valueStyleNew);
+                        DrawValueWithLinks(rect, newVal, _valueStyleNew, d.NewValue, fullRow);
                     }
                     break;
             }
+        }
+
+        /// <summary>
+        /// Draws a value label. If the full value contains a GUID, makes the text clickable
+        /// to ping the referenced asset in the project window.
+        /// </summary>
+        private void DrawValueWithLinks(Rect rect, string displayText, GUIStyle style, string fullValue, Rect fullRow)
+        {
+            // Check if the full value contains a clickable GUID
+            string guid = ExtractFirstGuid(fullValue);
+            if (guid != null)
+            {
+                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.IsNullOrEmpty(assetPath))
+                {
+                    // Draw as clickable link
+                    EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+                    EditorGUI.LabelField(rect, displayText, _linkStyle);
+
+                    if (Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition))
+                    {
+                        var obj = AssetDatabase.LoadAssetAtPath<Object>(assetPath);
+                        if (obj != null)
+                        {
+                            EditorGUIUtility.PingObject(obj);
+                            Selection.activeObject = obj;
+                        }
+                        Event.current.Use();
+                    }
+                    return;
+                }
+            }
+
+            EditorGUI.LabelField(rect, displayText, style);
         }
 
         private void DrawBadge(Rect row, string text, GUIStyle style)
         {
             if (string.IsNullOrEmpty(text)) return;
             float w = style.CalcSize(new GUIContent(text)).x + 8f;
-            var rect = new Rect(row.xMax - w - 6f, row.y, w, row.height);
+            var rect = new Rect(row.xMax - w - 4f, row.y, w, row.height);
             EditorGUI.LabelField(rect, text, style);
         }
 
@@ -438,6 +492,26 @@ namespace VisualYAML
                 if (!string.IsNullOrEmpty(fc.NewValue))
                     menu.AddItem(new GUIContent("Copy New Value"), false, () =>
                         EditorGUIUtility.systemCopyBuffer = fc.NewValue);
+
+                // If value contains a GUID, offer to select the asset
+                var guid = ExtractFirstGuid(fc.NewValue) ?? ExtractFirstGuid(fc.OldValue);
+                if (guid != null)
+                {
+                    var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                    if (!string.IsNullOrEmpty(assetPath))
+                    {
+                        menu.AddSeparator("");
+                        menu.AddItem(new GUIContent("Select Referenced Asset"), false, () =>
+                        {
+                            var obj = AssetDatabase.LoadAssetAtPath<Object>(assetPath);
+                            if (obj != null)
+                            {
+                                EditorGUIUtility.PingObject(obj);
+                                Selection.activeObject = obj;
+                            }
+                        });
+                    }
+                }
             }
             else
             {
@@ -462,10 +536,6 @@ namespace VisualYAML
             return paren > 0 ? goPath.Substring(0, paren).TrimEnd() : goPath;
         }
 
-        /// <summary>
-        /// Returns true if ALL diffs under this GO path are document-level adds or removes
-        /// of the same type — meaning the entire GameObject was added or removed.
-        /// </summary>
         private static bool IsWholeObjectAddOrRemove(List<DiffResult> changes, string changeType)
         {
             if (changes.Count == 0) return false;
@@ -487,18 +557,12 @@ namespace VisualYAML
             if (a && !r && !m) return "added";
             if (r && !a && !m) return "removed";
             if (m && !a && !r) return "modified";
-            return "modified"; // mixed
+            return "modified";
         }
 
         private static int CountFieldChanges(List<DiffResult> changes)
         {
-            int count = 0;
-            foreach (var c in changes)
-            {
-                if (!c.IsDocumentLevel) count++;
-                else count++; // document-level still counts as 1 change
-            }
-            return count;
+            return changes.Count;
         }
 
         private static string SummarizeComponentBadge(DiffTreeItem item)
@@ -550,16 +614,67 @@ namespace VisualYAML
             return s;
         }
 
+        /// <summary>
+        /// Prettify YAML field paths for display.
+        /// Strips leading component type prefix and simplifies common patterns.
+        /// </summary>
         private static string PrettyFieldPath(string raw, string componentType)
         {
             if (string.IsNullOrEmpty(raw) || raw == "<document>") return "(whole component)";
+
+            // Strip component type prefix: "/Transform/m_LocalPosition/x" → "m_LocalPosition/x"
             if (!string.IsNullOrEmpty(componentType))
             {
                 var lead = "/" + componentType + "/";
                 if (raw.StartsWith(lead)) raw = raw.Substring(lead.Length);
             }
             if (raw.StartsWith("/")) raw = raw.Substring(1);
+
+            // Simplify common Unity YAML field prefixes for readability
+            // m_LocalPosition/x → LocalPosition.x
+            // m_Materials[0] → Materials[0]
+            raw = SimplifyFieldName(raw);
+
             return raw;
+        }
+
+        /// <summary>
+        /// Simplify Unity YAML field names for display:
+        /// - Strip m_ prefix
+        /// - Replace / separators with . for sub-fields
+        /// </summary>
+        private static string SimplifyFieldName(string field)
+        {
+            // Strip leading m_ prefix
+            if (field.StartsWith("m_")) field = field.Substring(2);
+
+            // Replace internal / separators with . for sub-fields
+            // But keep array brackets: m_LocalPosition/x → LocalPosition.x
+            field = field.Replace("/m_", ".").Replace("/", ".");
+
+            return field;
+        }
+
+        /// <summary>Build tooltip showing full old/new values for hover display.</summary>
+        private static string BuildTooltip(DiffResult d)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("Field: ").AppendLine(d.FieldPath);
+
+            if (!string.IsNullOrEmpty(d.OldValue))
+                sb.Append("Old: ").AppendLine(d.OldValue.Length > 500 ? d.OldValue.Substring(0, 500) + "..." : d.OldValue);
+            if (!string.IsNullOrEmpty(d.NewValue))
+                sb.Append("New: ").AppendLine(d.NewValue.Length > 500 ? d.NewValue.Substring(0, 500) + "..." : d.NewValue);
+
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>Extract the first 32-character hex GUID from a string, or null.</summary>
+        private static string ExtractFirstGuid(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return null;
+            var m = GuidPattern.Match(value);
+            return m.Success ? m.Groups[1].Value : null;
         }
     }
 }

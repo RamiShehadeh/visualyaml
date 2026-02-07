@@ -19,6 +19,24 @@ namespace VisualYAML
             "/m_PrefabInstance",
             "/m_PrefabAsset",
             "/serializedVersion",
+            "/m_Father",
+            "/m_RootOrder",
+            "/m_LocalEulerAnglesHint",
+        };
+
+        // Field path prefixes that are always noise
+        private static readonly string[] NoisyPrefixes = new[]
+        {
+            // PrefabInstance internal override bookkeeping — very noisy, index-matched arrays
+            "/m_Modification/m_TransformParent",
+            "/m_Modification/m_Modifications",
+            "/m_Modification/m_RemovedComponents",
+            "/m_Modification/m_RemovedGameObjects",
+            "/m_Modification/m_AddedComponents",
+            "/m_Modification/m_AddedGameObjects",
+            // Source prefab reference tracking
+            "/m_SourcePrefab",
+            "/m_ParentPrefab",
         };
 
         public static List<DiffResult> Diff(
@@ -255,6 +273,10 @@ namespace VisualYAML
             if (TryKeyBasedSequenceDiff(old, @new, path, diffs, docForMeta, graph))
                 return;
 
+            // Try name-based matching for settings arrays (QualitySettings, etc.)
+            if (TryNameBasedSequenceDiff(old, @new, path, diffs, docForMeta, graph))
+                return;
+
             // Fallback: index-based comparison
             int count = Math.Max(old.Children.Count, @new.Children.Count);
             for (int i = 0; i < count; i++)
@@ -344,6 +366,77 @@ namespace VisualYAML
             return true;
         }
 
+        /// <summary>
+        /// For arrays of mappings with a "name" field (like QualitySettings, InputManager axes),
+        /// match by name instead of index to avoid false positives when entries are reordered.
+        /// </summary>
+        private static bool TryNameBasedSequenceDiff(
+            YamlSequenceNode old, YamlSequenceNode @new, string path,
+            List<DiffResult> diffs, UnityYamlDocument docForMeta, PrefabGraph graph)
+        {
+            if (old.Children.Count == 0 && @new.Children.Count == 0) return true;
+
+            string ExtractName(YamlNode node)
+            {
+                if (node is YamlMappingNode map &&
+                    map.Children.TryGetValue(new YamlScalarNode("name"), out var nameNode) &&
+                    nameNode is YamlScalarNode nameScalar &&
+                    !string.IsNullOrEmpty(nameScalar.Value))
+                    return nameScalar.Value;
+                return null;
+            }
+
+            // Check if elements have name keys
+            bool hasNames = false;
+            if (old.Children.Count > 0 && ExtractName(old.Children[0]) != null) hasNames = true;
+            else if (@new.Children.Count > 0 && ExtractName(@new.Children[0]) != null) hasNames = true;
+            if (!hasNames) return false;
+
+            // Build old map by name (with index suffix for duplicates)
+            var oldByName = new Dictionary<string, (int idx, YamlNode node)>();
+            var nameCounts = new Dictionary<string, int>();
+            for (int i = 0; i < old.Children.Count; i++)
+            {
+                var name = ExtractName(old.Children[i]);
+                if (name == null) return false; // Mixed — bail to index-based
+                nameCounts.TryGetValue(name, out int cnt);
+                var key = cnt > 0 ? name + "#" + cnt : name;
+                nameCounts[name] = cnt + 1;
+                oldByName[key] = (i, old.Children[i]);
+            }
+
+            var matchedOld = new HashSet<string>();
+            var newNameCounts = new Dictionary<string, int>();
+
+            for (int i = 0; i < @new.Children.Count; i++)
+            {
+                var name = ExtractName(@new.Children[i]);
+                if (name == null) return false;
+
+                newNameCounts.TryGetValue(name, out int cnt);
+                var key = cnt > 0 ? name + "#" + cnt : name;
+                newNameCounts[name] = cnt + 1;
+
+                if (oldByName.TryGetValue(key, out var oldEntry))
+                {
+                    Recurse(oldEntry.node, @new.Children[i], path + "/" + name, diffs, docForMeta, graph);
+                    matchedOld.Add(key);
+                }
+                else
+                {
+                    Recurse(null, @new.Children[i], path + "/" + name, diffs, docForMeta, graph);
+                }
+            }
+
+            foreach (var kv in oldByName)
+            {
+                if (!matchedOld.Contains(kv.Key))
+                    Recurse(kv.Value.node, null, path + "/" + kv.Key, diffs, docForMeta, graph);
+            }
+
+            return true;
+        }
+
         private static void AddDiff(
             string fieldPath, List<DiffResult> diffs,
             UnityYamlDocument docForMeta, PrefabGraph graph,
@@ -369,20 +462,50 @@ namespace VisualYAML
         {
             diffs.RemoveAll(d =>
             {
+                if (d.FieldPath == null) return false;
+
                 // Remove noisy GameObject m_Component changes
                 if (string.Equals(d.ComponentType, "GameObject", StringComparison.OrdinalIgnoreCase) &&
-                    d.FieldPath != null && d.FieldPath.Contains("/m_Component"))
+                    d.FieldPath.Contains("/m_Component"))
                     return true;
 
-                // Remove known noisy fields
+                // Remove known noisy fields (exact prefix match)
                 foreach (var noisy in NoisyFields)
                 {
-                    if (d.FieldPath != null && d.FieldPath.StartsWith(noisy, StringComparison.OrdinalIgnoreCase))
+                    if (d.FieldPath.StartsWith(noisy, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+
+                // Remove noisy prefix patterns
+                foreach (var prefix in NoisyPrefixes)
+                {
+                    if (d.FieldPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+
+                // Filter fileID-only changes within references (structural, not user-visible)
+                // e.g., /m_Materials[0]/fileID changing from 0 to 12345 (same asset, different ID)
+                if (d.FieldPath.EndsWith("/fileID") && d.ChangeType == "modified")
+                {
+                    // Keep if the value actually resolves to different things
+                    // But filter if it's just internal ID churn (both are numbers)
+                    if (IsPlainNumber(d.OldValue) && IsPlainNumber(d.NewValue))
                         return true;
                 }
 
                 return false;
             });
+        }
+
+        private static bool IsPlainNumber(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c != '-' && (c < '0' || c > '9')) return false;
+            }
+            return true;
         }
 
         // --- Hierarchy resolution (O(depth) with indexed parent lookup) ---
