@@ -108,14 +108,15 @@ namespace VisualYAML
         private void DrawSplitPanel()
         {
             var fullRect = GUILayoutUtility.GetRect(0, 0, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-            if (fullRect.width < 10) return;
 
-            // Clamp split
-            _splitX = Mathf.Clamp(_splitX, SplitMinLeft, fullRect.width - SplitMinRight);
+            // Clamp split — guard against zero-width rect during Layout pass
+            float maxSplit = Mathf.Max(SplitMinLeft, fullRect.width - SplitMinRight);
+            _splitX = Mathf.Clamp(_splitX, SplitMinLeft, maxSplit);
 
             var leftRect = new Rect(fullRect.x, fullRect.y, _splitX, fullRect.height);
             var handleRect = new Rect(fullRect.x + _splitX, fullRect.y, SplitHandleWidth, fullRect.height);
-            var rightRect = new Rect(fullRect.x + _splitX + SplitHandleWidth, fullRect.y, fullRect.width - _splitX - SplitHandleWidth, fullRect.height);
+            var rightRect = new Rect(fullRect.x + _splitX + SplitHandleWidth, fullRect.y,
+                Mathf.Max(0, fullRect.width - _splitX - SplitHandleWidth), fullRect.height);
 
             // Handle dragging
             EditorGUIUtility.AddCursorRect(handleRect, MouseCursor.ResizeHorizontal);
@@ -129,7 +130,7 @@ namespace VisualYAML
                 if (Event.current.type == EventType.MouseDrag)
                 {
                     _splitX = Event.current.mousePosition.x - fullRect.x;
-                    _splitX = Mathf.Clamp(_splitX, SplitMinLeft, fullRect.width - SplitMinRight);
+                    _splitX = Mathf.Clamp(_splitX, SplitMinLeft, maxSplit);
                     Event.current.Use();
                     Repaint();
                 }
@@ -166,10 +167,10 @@ namespace VisualYAML
 
                 GUILayout.BeginHorizontal();
 
-                // File icon
+                // File icon — always reserve space to keep GUILayout control count consistent
                 var icon = GetFileIcon(e.AssetPath);
-                if (icon != null)
-                    GUILayout.Label(new GUIContent(icon), GUILayout.Width(18), GUILayout.Height(18));
+                GUILayout.Label(icon != null ? new GUIContent(icon) : GUIContent.none,
+                    GUILayout.Width(18), GUILayout.Height(18));
 
                 // Selection toggle
                 bool pressed = GUILayout.Toggle(isSelected, Path.GetFileName(e.AssetPath), "Button");
@@ -223,8 +224,9 @@ namespace VisualYAML
             GUILayout.EndHorizontal();
             GUILayout.Space(4);
 
-            var treeRect = GUILayoutUtility.GetRect(rect.width, rect.height - 50);
-            if (_treeView != null)
+            // Use ExpandHeight to fill remaining area instead of hardcoded offset
+            var treeRect = GUILayoutUtility.GetRect(0, 0, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+            if (_treeView != null && treeRect.height > 1)
                 _treeView.OnGUI(treeRect);
 
             GUILayout.EndArea();
