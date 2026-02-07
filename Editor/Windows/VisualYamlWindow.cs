@@ -18,6 +18,11 @@ namespace VisualYAML
         private string _pendingSearch = "";
         private CompareMode _compareMode = CompareMode.LastCommit;
 
+        // Branch comparison state
+        private string _baseBranch;          // selected base branch for Branch mode
+        private string _currentBranch;       // cached current branch name
+        private string _cachedRepoRoot;      // cached repo root path
+
         // Resizable split panel
         private float _splitX = 280f;
         private bool _draggingSplit;
@@ -38,12 +43,14 @@ namespace VisualYAML
         private static readonly Color StatusModifiedColor = new Color(0.95f, 0.82f, 0.40f);
         private static readonly Color StatusDeletedColor = new Color(0.95f, 0.50f, 0.45f);
         private static readonly Color StatusRenamedColor = new Color(0.55f, 0.75f, 0.95f);
+        private static readonly Color BranchColor = new Color(0.55f, 0.75f, 0.95f);
         private static readonly Color DimColor = new Color(0.55f, 0.55f, 0.55f);
 
         private GUIStyle _statusStyle;
         private GUIStyle _badgeLabelStyle;
         private GUIStyle _headerPathStyle;
         private GUIStyle _headerStatusStyle;
+        private GUIStyle _branchInfoStyle;
 
         [MenuItem("Tools/Visual YAML/Diff Tool")]
         public static void ShowWindow()
@@ -63,18 +70,43 @@ namespace VisualYAML
             EditorPrefs.SetFloat("VisualYAML_SplitX", _splitX);
         }
 
+        private string GetRepoRoot()
+        {
+            if (_cachedRepoRoot == null)
+            {
+                var projectRoot = Application.dataPath.Replace("/Assets", "");
+                _cachedRepoRoot = GitRunner.FindRepoRoot(projectRoot) ?? "";
+            }
+            return _cachedRepoRoot;
+        }
+
         private void OnGUI()
         {
             // Toolbar uses GUILayout — self-contained, no mixing
             DrawToolbar();
 
-            // Everything below is pure Rect-based (no GUILayout) to avoid
-            // Layout/Repaint control-count mismatches from BeginArea/GetRect
+            // Branch info bar (only in Branch mode)
+            float extraHeaderH = 0;
+            if (_compareMode == CompareMode.Branch && !string.IsNullOrEmpty(_baseBranch))
+                extraHeaderH = 22f;
+
             float toolbarH = EditorStyles.toolbar.fixedHeight;
             if (toolbarH < 1) toolbarH = 20f;
-            float contentY = toolbarH + 2f;
-            var contentRect = new Rect(0, contentY, position.width, position.height - contentY);
+            float contentY = toolbarH + 2f + extraHeaderH;
 
+            // Draw branch info bar between toolbar and content
+            if (extraHeaderH > 0)
+            {
+                EnsureWindowStyles();
+                var barRect = new Rect(0, toolbarH + 1, position.width, extraHeaderH);
+                EditorGUI.DrawRect(barRect, new Color(0.18f, 0.18f, 0.22f));
+
+                var branchText = (_currentBranch ?? "HEAD") + "  vs  " + _baseBranch;
+                EditorGUI.LabelField(new Rect(8, barRect.y + 1, barRect.width - 16, barRect.height - 2),
+                    branchText, _branchInfoStyle);
+            }
+
+            var contentRect = new Rect(0, contentY, position.width, position.height - contentY);
             if (contentRect.height < 10 || contentRect.width < 10) return;
 
             // Compute split rects
@@ -106,20 +138,27 @@ namespace VisualYAML
             if (EditorGUILayout.DropdownButton(new GUIContent(modeLabel), FocusType.Passive, EditorStyles.toolbarDropDown, GUILayout.Width(180)))
             {
                 var menu = new GenericMenu();
-                menu.AddItem(new GUIContent("Last Commit (HEAD~1 vs HEAD)"), _compareMode == CompareMode.LastCommit, () => _compareMode = CompareMode.LastCommit);
-                menu.AddItem(new GUIContent("Working Tree (HEAD vs unstaged)"), _compareMode == CompareMode.WorkingTree, () => _compareMode = CompareMode.WorkingTree);
-                menu.AddItem(new GUIContent("Staged (HEAD vs index)"), _compareMode == CompareMode.Staged, () => _compareMode = CompareMode.Staged);
+                menu.AddItem(new GUIContent("Last Commit (HEAD~1 vs HEAD)"), _compareMode == CompareMode.LastCommit,
+                    () => { _compareMode = CompareMode.LastCommit; });
+                menu.AddItem(new GUIContent("Working Tree (HEAD vs unstaged)"), _compareMode == CompareMode.WorkingTree,
+                    () => { _compareMode = CompareMode.WorkingTree; });
+                menu.AddItem(new GUIContent("Staged (HEAD vs index)"), _compareMode == CompareMode.Staged,
+                    () => { _compareMode = CompareMode.Staged; });
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent("Compare to Branch (PR diff)"), _compareMode == CompareMode.Branch,
+                    () => ShowBranchPicker());
                 menu.ShowAsContext();
             }
 
             if (GUILayout.Button("Fetch Changes", EditorStyles.toolbarButton))
                 FetchChangedAssets();
 
+            // Prominent "Compare to Branch" button
+            if (GUILayout.Button("Compare to Branch", EditorStyles.toolbarButton))
+                ShowBranchPicker();
+
             if (GUILayout.Button("Manual Diff", EditorStyles.toolbarButton))
                 ManualFileSelection();
-
-            if (GUILayout.Button("Compare to Commit", EditorStyles.toolbarButton))
-                ShowCommitPicker();
 
             GUILayout.FlexibleSpace();
 
@@ -137,14 +176,81 @@ namespace VisualYAML
             GUILayout.EndHorizontal();
         }
 
-        private static string CompareModeLabel(CompareMode mode)
+        private string CompareModeLabel(CompareMode mode)
         {
             switch (mode)
             {
                 case CompareMode.WorkingTree: return "Working Tree";
                 case CompareMode.Staged: return "Staged";
+                case CompareMode.Branch:
+                    return !string.IsNullOrEmpty(_baseBranch) ? "vs " + _baseBranch : "Branch";
                 default: return "Last Commit";
             }
+        }
+
+        // --- Branch picker ---
+
+        private void ShowBranchPicker()
+        {
+            var repoRoot = GetRepoRoot();
+            if (string.IsNullOrEmpty(repoRoot))
+            {
+                EditorUtility.DisplayDialog("Visual YAML",
+                    "This project is not inside a Git repository, or git is not on PATH.", "OK");
+                return;
+            }
+
+            _currentBranch = GitDiffProvider.GetCurrentBranch(repoRoot);
+            var branches = GitDiffProvider.GetBranches(repoRoot);
+
+            if (branches.Count == 0)
+            {
+                EditorUtility.DisplayDialog("Visual YAML",
+                    "No other branches found. Create a branch and make changes to compare.", "OK");
+                return;
+            }
+
+            var menu = new GenericMenu();
+
+            // Group: common base branches at top
+            bool addedSeparator = false;
+            for (int i = 0; i < branches.Count; i++)
+            {
+                var branch = branches[i];
+                var shortName = branch;
+                int slash = branch.LastIndexOf('/');
+                if (slash >= 0) shortName = branch.Substring(slash + 1);
+
+                // Add separator after the prioritized branches
+                if (!addedSeparator && i > 0)
+                {
+                    var lowerPrev = branches[i - 1].ToLowerInvariant();
+                    var lowerCurr = branch.ToLowerInvariant();
+                    bool prevIsCommon = lowerPrev.EndsWith("/main") || lowerPrev.EndsWith("/master") ||
+                                        lowerPrev.EndsWith("/develop") || lowerPrev == "main" ||
+                                        lowerPrev == "master" || lowerPrev == "develop";
+                    bool currIsCommon = lowerCurr.EndsWith("/main") || lowerCurr.EndsWith("/master") ||
+                                        lowerCurr.EndsWith("/develop") || lowerCurr == "main" ||
+                                        lowerCurr == "master" || lowerCurr == "develop";
+                    if (prevIsCommon && !currIsCommon)
+                    {
+                        menu.AddSeparator("");
+                        addedSeparator = true;
+                    }
+                }
+
+                var selected = branch == _baseBranch;
+                menu.AddItem(new GUIContent(branch), selected, () => SelectBaseBranch(branch));
+            }
+
+            menu.ShowAsContext();
+        }
+
+        private void SelectBaseBranch(string branch)
+        {
+            _baseBranch = branch;
+            _compareMode = CompareMode.Branch;
+            FetchChangedAssets();
         }
 
         // --- Split handle dragging ---
@@ -207,6 +313,13 @@ namespace VisualYAML
                 fontSize = 11,
                 alignment = TextAnchor.MiddleLeft
             };
+            _branchInfoStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                normal = { textColor = BranchColor },
+                fontSize = 11,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft
+            };
         }
 
         private static Color GetStatusColor(string changeType)
@@ -233,9 +346,8 @@ namespace VisualYAML
 
             if (_entries.Count == 0)
             {
-                // Empty state with centered message
                 var msgRect = new Rect(innerRect.x + 8, innerRect.y + innerRect.height * 0.3f, innerRect.width - 16, 60);
-                EditorGUI.HelpBox(msgRect, "Click \"Fetch Changes\" to detect changed YAML assets from Git.", MessageType.Info);
+                EditorGUI.HelpBox(msgRect, "Click \"Fetch Changes\" or \"Compare to Branch\" to detect changed YAML assets.", MessageType.Info);
                 return;
             }
 
@@ -250,19 +362,16 @@ namespace VisualYAML
                 var isSelected = _selectedIndex == i;
                 var rowRect = new Rect(0, i * AssetRowHeight, viewRect.width, AssetRowHeight);
 
-                // Selection / hover background
                 if (isSelected)
                     EditorGUI.DrawRect(rowRect, SelectionColor);
                 else if (rowRect.Contains(Event.current.mousePosition))
                     EditorGUI.DrawRect(rowRect, HoverColor);
 
-                // Left color strip for change type
                 var stripColor = GetStatusColor(e.ChangeType);
                 EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.y, 3f, rowRect.height), stripColor);
 
                 float x = rowRect.x + 8;
 
-                // File icon
                 var icon = GetFileIcon(e.AssetPath);
                 if (icon != null)
                 {
@@ -271,22 +380,18 @@ namespace VisualYAML
                 }
                 x += AssetIconSize + 6;
 
-                // File name
                 float statusAndBadge = AssetStatusWidth + AssetBadgeWidth + 8;
                 float nameWidth = Mathf.Max(40, rowRect.width - x - statusAndBadge);
                 EditorGUI.LabelField(new Rect(x, rowRect.y, nameWidth, rowRect.height), Path.GetFileName(e.AssetPath));
 
-                // Change count badge (right-aligned, before status)
                 int changeCount = e.DiffResults != null ? e.DiffResults.Count : 0;
                 float rightX = rowRect.xMax;
 
-                // Status label (colored)
                 rightX -= AssetStatusWidth + 2;
                 _statusStyle.normal.textColor = stripColor;
                 EditorGUI.LabelField(new Rect(rightX, rowRect.y, AssetStatusWidth, rowRect.height),
                     e.ChangeType, _statusStyle);
 
-                // Badge
                 if (changeCount > 0)
                 {
                     rightX -= AssetBadgeWidth;
@@ -294,11 +399,9 @@ namespace VisualYAML
                         changeCount.ToString(), _badgeLabelStyle);
                 }
 
-                // Separator line
                 EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.yMax - 1, rowRect.width, 1),
                     new Color(0.2f, 0.2f, 0.2f, 0.3f));
 
-                // Click to select
                 if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition))
                 {
                     _selectedIndex = i;
@@ -327,16 +430,13 @@ namespace VisualYAML
             var e = _entries[_selectedIndex];
             float y = rect.y + 4;
 
-            // Header: file path + status
             float pathWidth = rect.width - 200;
             EditorGUI.LabelField(new Rect(rect.x + 4, y, pathWidth, 20), e.AssetPath, _headerPathStyle);
 
-            // Status colored badge in header
             _headerStatusStyle.normal.textColor = GetStatusColor(e.ChangeType);
             EditorGUI.LabelField(new Rect(rect.x + 4 + pathWidth, y, 100, 20), e.ChangeType, _headerStatusStyle);
             y += 24;
 
-            // Summary + buttons bar
             int totalChanges = e.DiffResults != null ? e.DiffResults.Count : 0;
             string summary = totalChanges == 1 ? "1 change" : totalChanges + " changes";
             EditorGUI.LabelField(new Rect(rect.x + 4, y, 200, 18), summary,
@@ -349,11 +449,9 @@ namespace VisualYAML
                 _treeView?.CollapseAll();
             y += 22;
 
-            // Separator line
             EditorGUI.DrawRect(new Rect(rect.x, y, rect.width, 1), new Color(0.3f, 0.3f, 0.3f, 0.5f));
             y += 2;
 
-            // Tree view fills remaining space
             var treeRect = new Rect(rect.x, y, rect.width, Mathf.Max(0, rect.yMax - y));
             if (_treeView != null && treeRect.height > 1)
                 _treeView.OnGUI(treeRect);
@@ -374,7 +472,7 @@ namespace VisualYAML
             _treeView = null;
 
             var projectRoot = Application.dataPath.Replace("/Assets", "");
-            var repoRoot = GitRunner.FindRepoRoot(projectRoot);
+            var repoRoot = GetRepoRoot();
             if (string.IsNullOrEmpty(repoRoot))
             {
                 EditorUtility.DisplayDialog("Visual YAML",
@@ -382,10 +480,30 @@ namespace VisualYAML
                 return;
             }
 
-            var changed = GitDiffProvider.GetChangedFiles(repoRoot, _compareMode);
+            _currentBranch = GitDiffProvider.GetCurrentBranch(repoRoot);
+
+            List<ChangedFile> changed;
+
+            if (_compareMode == CompareMode.Branch)
+            {
+                if (string.IsNullOrEmpty(_baseBranch))
+                {
+                    ShowBranchPicker();
+                    return;
+                }
+                changed = GitDiffProvider.GetChangedFilesVsBranch(repoRoot, _baseBranch);
+            }
+            else
+            {
+                changed = GitDiffProvider.GetChangedFiles(repoRoot, _compareMode);
+            }
+
             if (changed.Count == 0)
             {
-                EditorUtility.DisplayDialog("Visual YAML", "No changed files detected.", "OK");
+                var msg = _compareMode == CompareMode.Branch
+                    ? "No changed files between " + (_currentBranch ?? "HEAD") + " and " + _baseBranch + "."
+                    : "No changed files detected.";
+                EditorUtility.DisplayDialog("Visual YAML", msg, "OK");
                 return;
             }
 
@@ -401,16 +519,30 @@ namespace VisualYAML
                     ChangeType = GitDiffProvider.StatusToLabel(cf.Status)
                 };
 
-                string current = GitDiffProvider.GetCurrentFileContent(projectRoot, cf.Path);
+                string current = null;
                 string previous = null;
 
-                if (entry.ChangeType == "Modified" || entry.ChangeType == "Renamed")
+                if (_compareMode == CompareMode.Branch)
                 {
-                    var prevPath = cf.OldPath ?? cf.Path;
-                    if (_compareMode == CompareMode.LastCommit && GitDiffProvider.HasCommits(repoRoot, 2))
-                        previous = GitDiffProvider.GetFileAtCommit(repoRoot, "HEAD~1", prevPath);
-                    else if (_compareMode == CompareMode.WorkingTree || _compareMode == CompareMode.Staged)
-                        previous = GitDiffProvider.GetFileAtCommit(repoRoot, "HEAD", prevPath);
+                    // Branch mode: compare merge-base content vs HEAD content
+                    current = GitDiffProvider.GetFileAtCommit(repoRoot, "HEAD", cf.Path);
+                    if (entry.ChangeType == "Modified" || entry.ChangeType == "Renamed")
+                    {
+                        var prevPath = cf.OldPath ?? cf.Path;
+                        previous = GitDiffProvider.GetFileAtMergeBase(repoRoot, _baseBranch, prevPath);
+                    }
+                }
+                else
+                {
+                    current = GitDiffProvider.GetCurrentFileContent(projectRoot, cf.Path);
+                    if (entry.ChangeType == "Modified" || entry.ChangeType == "Renamed")
+                    {
+                        var prevPath = cf.OldPath ?? cf.Path;
+                        if (_compareMode == CompareMode.LastCommit && GitDiffProvider.HasCommits(repoRoot, 2))
+                            previous = GitDiffProvider.GetFileAtCommit(repoRoot, "HEAD~1", prevPath);
+                        else if (_compareMode == CompareMode.WorkingTree || _compareMode == CompareMode.Staged)
+                            previous = GitDiffProvider.GetFileAtCommit(repoRoot, "HEAD", prevPath);
+                    }
                 }
 
                 ComputeDiff(entry, previous ?? "", current ?? "");
@@ -445,69 +577,6 @@ namespace VisualYAML
             _entries.Add(entry);
             _selectedIndex = _entries.Count - 1;
             RebuildTree();
-        }
-
-        private void ShowCommitPicker()
-        {
-            if (_selectedIndex < 0 || _selectedIndex >= _entries.Count)
-            {
-                EditorUtility.DisplayDialog("Visual YAML", "Select an asset on the left first.", "OK");
-                return;
-            }
-
-            var asset = _entries[_selectedIndex].AssetPath;
-            if (asset.StartsWith("Manual:"))
-            {
-                EditorUtility.DisplayDialog("Visual YAML", "Cannot compare manual diffs to commits.", "OK");
-                return;
-            }
-
-            var projectRoot = Application.dataPath.Replace("/Assets", "");
-            var repoRoot = GitRunner.FindRepoRoot(projectRoot) ?? projectRoot;
-            var commits = GitDiffProvider.GetCommitHistory(repoRoot, asset, 50);
-
-            if (commits.Count == 0)
-            {
-                EditorUtility.DisplayDialog("Visual YAML", "No commit history found for this file.", "OK");
-                return;
-            }
-
-            var menu = new GenericMenu();
-            for (int i = 0; i < commits.Count; i++)
-            {
-                var c = commits[i];
-                var label = c.ShortHash + "  " + c.Title + "  (" + c.Date + ")";
-                menu.AddItem(new GUIContent(label), false, () => CompareToCommit(asset, c.Hash, projectRoot, repoRoot));
-            }
-            menu.ShowAsContext();
-        }
-
-        private void CompareToCommit(string assetPath, string commitHash, string projectRoot, string repoRoot)
-        {
-            try
-            {
-                var previous = GitDiffProvider.GetFileAtCommit(repoRoot, commitHash, assetPath) ?? "";
-                var current = GitDiffProvider.GetCurrentFileContent(projectRoot, assetPath) ?? "";
-
-                var entry = new AssetDiffEntry
-                {
-                    AssetPath = assetPath,
-                    ChangeType = "vs " + commitHash.Substring(0, Math.Min(7, commitHash.Length))
-                };
-
-                ComputeDiff(entry, previous, current);
-
-                if (_selectedIndex >= 0 && _selectedIndex < _entries.Count)
-                    _entries[_selectedIndex] = entry;
-                else
-                    _entries.Add(entry);
-
-                RebuildTree();
-            }
-            catch (Exception e)
-            {
-                Debug.LogError("[VisualYAML] Compare to commit failed: " + e.Message);
-            }
         }
 
         // --- Diff Computation ---

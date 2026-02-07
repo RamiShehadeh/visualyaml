@@ -10,6 +10,7 @@ namespace VisualYAML
         LastCommit,       // HEAD~1 vs HEAD
         WorkingTree,      // HEAD vs working tree (unstaged)
         Staged,           // HEAD vs staged (index)
+        Branch,           // merge-base(target, HEAD) vs HEAD
     }
 
     internal class ChangedFile
@@ -127,6 +128,115 @@ namespace VisualYAML
                 }
             }
             return list;
+        }
+
+        // --- Branch operations ---
+
+        /// <summary>
+        /// Get the current branch name (e.g. "feature/my-feature"), or null if detached.
+        /// </summary>
+        public static string GetCurrentBranch(string repoRoot)
+        {
+            var res = GitRunner.Run("rev-parse --abbrev-ref HEAD", repoRoot);
+            if (!res.Success) return null;
+            var branch = res.Stdout.Trim();
+            return branch == "HEAD" ? null : branch; // "HEAD" means detached
+        }
+
+        /// <summary>
+        /// Get list of local and remote-tracking branches, sorted with common base branches first.
+        /// </summary>
+        public static List<string> GetBranches(string repoRoot)
+        {
+            var branches = new List<string>();
+            var current = GetCurrentBranch(repoRoot);
+
+            // Local branches
+            var res = GitRunner.Run("branch --no-color", repoRoot);
+            if (res.Success)
+            {
+                var lines = res.Stdout.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    var name = lines[i].TrimStart('*', ' ');
+                    if (!string.IsNullOrEmpty(name) && name != current)
+                        branches.Add(name);
+                }
+            }
+
+            // Remote tracking branches (without HEAD pointers)
+            res = GitRunner.Run("branch -r --no-color", repoRoot);
+            if (res.Success)
+            {
+                var lines = res.Stdout.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    var name = lines[i].Trim();
+                    if (name.Contains("->")) continue; // skip HEAD -> origin/main
+                    if (!string.IsNullOrEmpty(name) && !branches.Contains(name))
+                        branches.Add(name);
+                }
+            }
+
+            // Sort: prioritize common base branch names at the top
+            branches.Sort((a, b) =>
+            {
+                int pa = BranchPriority(a);
+                int pb = BranchPriority(b);
+                if (pa != pb) return pa.CompareTo(pb);
+                return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+            });
+
+            return branches;
+        }
+
+        private static int BranchPriority(string name)
+        {
+            var lower = name.ToLowerInvariant();
+            // Strip remote prefix for priority check
+            int slash = lower.IndexOf('/');
+            var shortName = slash >= 0 ? lower.Substring(slash + 1) : lower;
+
+            if (shortName == "main") return 0;
+            if (shortName == "master") return 1;
+            if (shortName == "develop" || shortName == "development") return 2;
+            if (shortName.StartsWith("release")) return 3;
+            return 10;
+        }
+
+        /// <summary>
+        /// Find the merge-base (fork point) between two refs. This is the commit where
+        /// the current branch diverged from the target, giving a clean PR-style diff.
+        /// </summary>
+        public static string GetMergeBase(string repoRoot, string refA, string refB)
+        {
+            var res = GitRunner.Run("merge-base " + refA + " " + refB, repoRoot);
+            return res.Success ? res.Stdout.Trim() : null;
+        }
+
+        /// <summary>
+        /// Get changed files between the current branch and a base branch, using merge-base
+        /// to only show changes introduced on the current branch (PR-style diff).
+        /// </summary>
+        public static List<ChangedFile> GetChangedFilesVsBranch(string repoRoot, string baseBranch)
+        {
+            var mergeBase = GetMergeBase(repoRoot, baseBranch, "HEAD");
+            if (string.IsNullOrEmpty(mergeBase))
+            {
+                Debug.LogWarning("[VisualYAML] Could not find merge-base between " + baseBranch + " and HEAD. Falling back to direct diff.");
+                return GetChangedFilesBetweenCommits(repoRoot, baseBranch, "HEAD");
+            }
+            return GetChangedFilesBetweenCommits(repoRoot, mergeBase, "HEAD");
+        }
+
+        /// <summary>
+        /// Get file content at the merge-base with a branch (the "before" state for PR diffs).
+        /// </summary>
+        public static string GetFileAtMergeBase(string repoRoot, string baseBranch, string filePath)
+        {
+            var mergeBase = GetMergeBase(repoRoot, baseBranch, "HEAD");
+            if (string.IsNullOrEmpty(mergeBase)) return null;
+            return GetFileAtCommit(repoRoot, mergeBase, filePath);
         }
 
         // --- Parsing helpers ---
