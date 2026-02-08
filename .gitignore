@@ -6,6 +6,9 @@
 *.sln
 *.userprefs
 
+# Claude Code
+.claude/
+
 # macOS specific
 .DS_Store
 *.DS_Store
