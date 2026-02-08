@@ -131,8 +131,10 @@ namespace AssetDiff
                 });
             }
 
-            // Post-process: remove noise, prettify
+            // Post-process: remove noise, detect moves, prettify
             FilterNoise(diffs);
+            DetectMoves(diffs, oldGraph, newGraph);
+            ResolveChildrenFileIds(diffs, newGraph, oldGraph);
             PrettifyAllGuids(diffs);
 
             return diffs;
@@ -483,6 +485,10 @@ namespace AssetDiff
                         return true;
                 }
 
+                // Filter numerically identical float values (0 vs -0, etc.)
+                if (d.ChangeType == "modified" && AreNumericallyEqual(d.OldValue, d.NewValue))
+                    return true;
+
                 // Filter fileID-only changes within references (structural, not user-visible)
                 // e.g., /m_Materials[0]/fileID changing from 0 to 12345 (same asset, different ID)
                 if (d.FieldPath.EndsWith("/fileID") && d.ChangeType == "modified")
@@ -506,6 +512,184 @@ namespace AssetDiff
                 if (c != '-' && (c < '0' || c > '9')) return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Check if two string values are numerically equal (e.g., "0" vs "-0", "1.0" vs "1").
+        /// </summary>
+        private static bool AreNumericallyEqual(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            if (double.TryParse(a, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double da) &&
+                double.TryParse(b, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double db))
+            {
+                return da == db;
+            }
+            return false;
+        }
+
+        // --- Move detection ---
+
+        /// <summary>
+        /// Detect when objects are moved within a hierarchy (removed from one parent's
+        /// Children, added to another). Replace the paired add/remove entries with a
+        /// single "moved" DiffResult showing from → to.
+        /// </summary>
+        private static void DetectMoves(List<DiffResult> diffs, PrefabGraph oldGraph, PrefabGraph newGraph)
+        {
+            // Collect Children array additions and removals from Transform/RectTransform diffs
+            var childAdded = new List<(int index, DiffResult diff, long fileId)>();
+            var childRemoved = new List<(int index, DiffResult diff, long fileId)>();
+
+            for (int i = 0; i < diffs.Count; i++)
+            {
+                var d = diffs[i];
+                if (d.FieldPath == null) continue;
+                if (!d.FieldPath.Contains("/m_Children[")) continue;
+
+                var compType = d.ComponentType;
+                if (compType != "Transform" && compType != "RectTransform") continue;
+
+                string valueStr = d.ChangeType == "added" ? d.NewValue : d.OldValue;
+                long fid = ExtractFileIdFromValueString(valueStr);
+                if (fid == 0) continue;
+
+                if (d.ChangeType == "added")
+                    childAdded.Add((i, d, fid));
+                else if (d.ChangeType == "removed")
+                    childRemoved.Add((i, d, fid));
+            }
+
+            if (childAdded.Count == 0 || childRemoved.Count == 0) return;
+
+            var indicesToRemove = new HashSet<int>();
+            var movesToAdd = new List<DiffResult>();
+            var usedRemoved = new HashSet<int>();
+
+            foreach (var add in childAdded)
+            {
+                foreach (var rem in childRemoved)
+                {
+                    if (usedRemoved.Contains(rem.index)) continue;
+                    if (add.fileId != rem.fileId) continue;
+
+                    // Found a move: same transform fileID removed from one parent, added to another
+                    string movedObjectName = ResolveTransformName(add.fileId, newGraph)
+                                          ?? ResolveTransformName(add.fileId, oldGraph)
+                                          ?? "Object(" + add.fileId + ")";
+
+                    string oldParent = rem.diff.OwnerGameObject ?? "(root)";
+                    string newParent = add.diff.OwnerGameObject ?? "(root)";
+
+                    // Build full hierarchy path for the moved object in the new graph
+                    string hierarchyPath = ResolveTransformHierarchyPath(add.fileId, newGraph);
+                    if (string.IsNullOrEmpty(hierarchyPath))
+                        hierarchyPath = movedObjectName;
+
+                    movesToAdd.Add(new DiffResult
+                    {
+                        ChangeType = "moved",
+                        ComponentType = "Hierarchy",
+                        FieldPath = "parent",
+                        HierarchyPath = hierarchyPath,
+                        OldValue = oldParent,
+                        NewValue = newParent,
+                        OwnerGameObject = movedObjectName,
+                    });
+
+                    indicesToRemove.Add(add.index);
+                    indicesToRemove.Add(rem.index);
+                    usedRemoved.Add(rem.index);
+                    break;
+                }
+            }
+
+            if (indicesToRemove.Count == 0) return;
+
+            // Remove matched entries in reverse order to preserve indices
+            var sorted = new List<int>(indicesToRemove);
+            sorted.Sort();
+            for (int i = sorted.Count - 1; i >= 0; i--)
+                diffs.RemoveAt(sorted[i]);
+
+            diffs.AddRange(movesToAdd);
+        }
+
+        /// <summary>
+        /// Extract a fileID number from a value string like "{ fileID, 12345 }" or "{ fileID: 12345 }".
+        /// </summary>
+        private static long ExtractFileIdFromValueString(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return 0;
+
+            int idx = value.IndexOf("fileID", StringComparison.Ordinal);
+            if (idx < 0) return 0;
+
+            // Skip "fileID" and any separator (: , space)
+            int start = idx + 6;
+            while (start < value.Length && (value[start] == ':' || value[start] == ',' ||
+                                            value[start] == ' ' || value[start] == '\t'))
+                start++;
+
+            int end = start;
+            if (end < value.Length && value[end] == '-') end++;
+            while (end < value.Length && char.IsDigit(value[end])) end++;
+
+            if (end > start && long.TryParse(value.Substring(start, end - start), out long id))
+                return id;
+            return 0;
+        }
+
+        /// <summary>
+        /// Resolve a transform fileID to its GameObject name via the graph.
+        /// </summary>
+        private static string ResolveTransformName(long transformFileId, PrefabGraph graph)
+        {
+            if (graph == null) return null;
+            if (graph.TransformToNode.TryGetValue(transformFileId, out PrefabNode node))
+                return node.Name;
+            return null;
+        }
+
+        /// <summary>
+        /// Resolve a transform fileID to its full hierarchy path via the graph.
+        /// </summary>
+        private static string ResolveTransformHierarchyPath(long transformFileId, PrefabGraph graph)
+        {
+            if (graph == null) return null;
+            if (!graph.TransformToNode.TryGetValue(transformFileId, out PrefabNode node))
+                return null;
+
+            var segments = new List<string>();
+            BuildPathToRoot(node, graph, segments);
+            return string.Join("/", segments);
+        }
+
+        /// <summary>
+        /// Replace raw fileID values in Children array diffs with human-readable object names.
+        /// </summary>
+        private static void ResolveChildrenFileIds(List<DiffResult> diffs, PrefabGraph newGraph, PrefabGraph oldGraph)
+        {
+            for (int i = 0; i < diffs.Count; i++)
+            {
+                var d = diffs[i];
+                if (d.FieldPath == null || !d.FieldPath.Contains("/m_Children[")) continue;
+
+                if (!string.IsNullOrEmpty(d.NewValue))
+                {
+                    long fid = ExtractFileIdFromValueString(d.NewValue);
+                    string name = ResolveTransformName(fid, newGraph) ?? ResolveTransformName(fid, oldGraph);
+                    if (name != null) d.NewValue = name;
+                }
+                if (!string.IsNullOrEmpty(d.OldValue))
+                {
+                    long fid = ExtractFileIdFromValueString(d.OldValue);
+                    string name = ResolveTransformName(fid, oldGraph) ?? ResolveTransformName(fid, newGraph);
+                    if (name != null) d.OldValue = name;
+                }
+            }
         }
 
         // --- Hierarchy resolution (O(depth) with indexed parent lookup) ---

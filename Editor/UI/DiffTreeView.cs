@@ -32,6 +32,7 @@ namespace AssetDiff
         private GUIStyle _badgeStyleAdded;
         private GUIStyle _badgeStyleRemoved;
         private GUIStyle _badgeStyleModified;
+        private GUIStyle _badgeStyleMoved;
         private GUIStyle _badgeStyleCount;
         private GUIStyle _valueStyleOld;
         private GUIStyle _valueStyleNew;
@@ -50,6 +51,9 @@ namespace AssetDiff
         private static readonly Color StripAdded = new Color(0.30f, 0.82f, 0.48f);
         private static readonly Color StripRemoved = new Color(0.88f, 0.35f, 0.31f);
         private static readonly Color StripModified = new Color(0.90f, 0.76f, 0.31f);
+        private static readonly Color MovedBg = new Color(0.30f, 0.45f, 0.70f, 0.18f);
+        private static readonly Color MovedText = new Color(0.55f, 0.75f, 0.95f);
+        private static readonly Color StripMoved = new Color(0.45f, 0.65f, 0.90f);
         private static readonly Color DimText = new Color(0.6f, 0.6f, 0.6f);
         private static readonly Color LinkColor = new Color(0.45f, 0.70f, 1.0f);
 
@@ -74,6 +78,7 @@ namespace AssetDiff
             _badgeStyleAdded = MakeBadgeStyle(AddedText);
             _badgeStyleRemoved = MakeBadgeStyle(RemovedText);
             _badgeStyleModified = MakeBadgeStyle(ModifiedText);
+            _badgeStyleMoved = MakeBadgeStyle(MovedText);
             _badgeStyleCount = MakeBadgeStyle(DimText);
 
             _valueStyleOld = new GUIStyle(EditorStyles.miniLabel)
@@ -379,6 +384,7 @@ namespace AssetDiff
             {
                 case "added": badge = "Added"; break;
                 case "removed": badge = "Removed"; break;
+                case "moved": badge = "Moved"; break;
                 default: badge = "Modified"; break;
             }
             DrawBadge(row, badge, GetBadgeStyle(d.ChangeType));
@@ -399,7 +405,8 @@ namespace AssetDiff
                     DrawValueWithLinks(rect, oldVal, _valueStyleOld, d.OldValue, fullRow);
                     break;
 
-                default: // modified
+                case "moved":
+                default: // modified — show "old → new"
                     if (!string.IsNullOrEmpty(oldVal) && !string.IsNullOrEmpty(newVal))
                     {
                         float arrowWidth = 20f;
@@ -544,18 +551,20 @@ namespace AssetDiff
 
         private static string DominantChange(List<DiffResult> changes)
         {
-            bool a = false, r = false, m = false;
+            bool a = false, r = false, m = false, mv = false;
             foreach (var c in changes)
             {
                 switch (c.ChangeType)
                 {
                     case "added": a = true; break;
                     case "removed": r = true; break;
+                    case "moved": mv = true; break;
                     default: m = true; break;
                 }
             }
-            if (a && !r && !m) return "added";
-            if (r && !a && !m) return "removed";
+            if (a && !r && !m && !mv) return "added";
+            if (r && !a && !m && !mv) return "removed";
+            if (mv && !a && !r && !m) return "moved";
             if (m && !a && !r) return "modified";
             return "modified";
         }
@@ -580,6 +589,7 @@ namespace AssetDiff
             {
                 case "added": return _badgeStyleAdded;
                 case "removed": return _badgeStyleRemoved;
+                case "moved": return _badgeStyleMoved;
                 default: return _badgeStyleModified;
             }
         }
@@ -591,6 +601,7 @@ namespace AssetDiff
                 case "added": return AddedBg;
                 case "removed": return RemovedBg;
                 case "modified": return ModifiedBg;
+                case "moved": return MovedBg;
                 default: return new Color(0, 0, 0, 0);
             }
         }
@@ -601,6 +612,7 @@ namespace AssetDiff
             {
                 case "added": return StripAdded;
                 case "removed": return StripRemoved;
+                case "moved": return StripMoved;
                 default: return StripModified;
             }
         }
@@ -621,6 +633,7 @@ namespace AssetDiff
         private static string PrettyFieldPath(string raw, string componentType)
         {
             if (string.IsNullOrEmpty(raw) || raw == "<document>") return "(whole component)";
+            if (raw == "parent") return "Parent Changed";
 
             // Strip component type prefix: "/Transform/m_LocalPosition/x" → "m_LocalPosition/x"
             if (!string.IsNullOrEmpty(componentType))
