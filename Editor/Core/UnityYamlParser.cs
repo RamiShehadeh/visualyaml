@@ -4,7 +4,7 @@ using System.IO;
 using UnityEngine;
 using YamlDotNet.RepresentationModel;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal static class UnityYamlParser
     {
@@ -58,7 +58,7 @@ namespace VisualYAML
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[VisualYAML] YAML parse error in !u!{header.ClassId} &{header.FileId}: {e.Message}");
+                Debug.LogWarning($"[AssetDiff] YAML parse error in !u!{header.ClassId} &{header.FileId}: {e.Message}");
                 return doc; // Return doc without Yaml — still useful for graph building
             }
 

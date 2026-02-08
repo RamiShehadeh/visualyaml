@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal enum CompareMode
     {
@@ -72,7 +72,7 @@ namespace VisualYAML
             var res = GitRunner.Run(args, repoRoot);
             if (!res.Success)
             {
-                Debug.LogError("[VisualYAML] git error: " + res.Stderr);
+                Debug.LogError("[AssetDiff] git error: " + res.Stderr);
                 return new List<ChangedFile>();
             }
 
@@ -87,7 +87,7 @@ namespace VisualYAML
             var res = GitRunner.Run(args, repoRoot);
             if (!res.Success)
             {
-                Debug.LogError("[VisualYAML] git error: " + res.Stderr);
+                Debug.LogError("[AssetDiff] git error: " + res.Stderr);
                 return new List<ChangedFile>();
             }
             return ParseDiffNameStatus(res.Stdout);
@@ -223,7 +223,7 @@ namespace VisualYAML
             var mergeBase = GetMergeBase(repoRoot, baseBranch, "HEAD");
             if (string.IsNullOrEmpty(mergeBase))
             {
-                Debug.LogWarning("[VisualYAML] Could not find merge-base between " + baseBranch + " and HEAD. Falling back to direct diff.");
+                Debug.LogWarning("[AssetDiff] Could not find merge-base between " + baseBranch + " and HEAD. Falling back to direct diff.");
                 return GetChangedFilesBetweenCommits(repoRoot, baseBranch, "HEAD");
             }
             return GetChangedFilesBetweenCommits(repoRoot, mergeBase, "HEAD");

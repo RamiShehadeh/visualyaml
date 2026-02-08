@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal readonly struct RawDocument
     {

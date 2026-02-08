@@ -5,9 +5,9 @@ using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
-namespace VisualYAML
+namespace AssetDiff
 {
-    public class VisualYamlWindow : EditorWindow
+    public class AssetDiffWindow : EditorWindow
     {
         private List<AssetDiffEntry> _entries = new List<AssetDiffEntry>();
         private int _selectedIndex = -1;
@@ -52,22 +52,22 @@ namespace VisualYAML
         private GUIStyle _headerStatusStyle;
         private GUIStyle _branchInfoStyle;
 
-        [MenuItem("Tools/Visual YAML/Diff Tool")]
+        [MenuItem("Tools/AssetDiff/Diff Tool")]
         public static void ShowWindow()
         {
-            var win = GetWindow<VisualYamlWindow>("Visual YAML");
+            var win = GetWindow<AssetDiffWindow>("AssetDiff");
             win.minSize = new Vector2(800, 500);
         }
 
         private void OnEnable()
         {
             _treeState = _treeState ?? new TreeViewState();
-            _splitX = EditorPrefs.GetFloat("VisualYAML_SplitX", 280f);
+            _splitX = EditorPrefs.GetFloat("AssetDiff_SplitX", 280f);
         }
 
         private void OnDisable()
         {
-            EditorPrefs.SetFloat("VisualYAML_SplitX", _splitX);
+            EditorPrefs.SetFloat("AssetDiff_SplitX", _splitX);
         }
 
         private string GetRepoRoot()
@@ -195,7 +195,7 @@ namespace VisualYAML
             var repoRoot = GetRepoRoot();
             if (string.IsNullOrEmpty(repoRoot))
             {
-                EditorUtility.DisplayDialog("Visual YAML",
+                EditorUtility.DisplayDialog("AssetDiff",
                     "This project is not inside a Git repository, or git is not on PATH.", "OK");
                 return;
             }
@@ -205,7 +205,7 @@ namespace VisualYAML
 
             if (branches.Count == 0)
             {
-                EditorUtility.DisplayDialog("Visual YAML",
+                EditorUtility.DisplayDialog("AssetDiff",
                     "No other branches found. Create a branch and make changes to compare.", "OK");
                 return;
             }
@@ -475,7 +475,7 @@ namespace VisualYAML
             var repoRoot = GetRepoRoot();
             if (string.IsNullOrEmpty(repoRoot))
             {
-                EditorUtility.DisplayDialog("Visual YAML",
+                EditorUtility.DisplayDialog("AssetDiff",
                     "This project is not inside a Git repository, or git is not on PATH.", "OK");
                 return;
             }
@@ -503,7 +503,7 @@ namespace VisualYAML
                 var msg = _compareMode == CompareMode.Branch
                     ? "No changed files between " + (_currentBranch ?? "HEAD") + " and " + _baseBranch + "."
                     : "No changed files detected.";
-                EditorUtility.DisplayDialog("Visual YAML", msg, "OK");
+                EditorUtility.DisplayDialog("AssetDiff", msg, "OK");
                 return;
             }
 
@@ -555,7 +555,7 @@ namespace VisualYAML
 
             if (processed == 0)
             {
-                EditorUtility.DisplayDialog("Visual YAML",
+                EditorUtility.DisplayDialog("AssetDiff",
                     "Changed files found, but none were supported YAML types (.prefab, .unity, .asset, .mat, etc.).", "OK");
             }
         }

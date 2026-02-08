@@ -1,6 +1,6 @@
-# Visual YAML - Unity YAML Diff Tool
+# AssetDiff - Unity Asset Diff Tool
 
-A Unity Editor extension that visualizes differences between YAML-serialized Unity assets — prefabs, scenes, materials, ScriptableObjects, and more. Built for teams using Git, where raw YAML diffs of `.prefab` and `.unity` files are unreadable.
+A Unity Editor extension that visualizes differences between serialized Unity assets — prefabs, scenes, materials, ScriptableObjects, and more. Built for teams using Git, where raw diffs of `.prefab` and `.unity` files are unreadable.
 
 ![image](Screenshots/YAML-Diff-screen.png)
 ![image](Screenshots/YAML-Diff-screen1.png)
@@ -51,7 +51,7 @@ The package includes `YamlDotNet.dll` in the Plugins folder. Ensure your project
 ## Usage
 
 1. **Open the Tool:**
-   In Unity, go to **Tools > Visual YAML > Diff Tool**.
+   In Unity, go to **Tools > AssetDiff > Diff Tool**.
 
 2. **Select Comparison Mode:**
    Use the "Source" dropdown to choose: Last Commit, Working Tree, or Staged.

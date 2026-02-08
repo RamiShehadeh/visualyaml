@@ -2,7 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal readonly struct GitResult
     {

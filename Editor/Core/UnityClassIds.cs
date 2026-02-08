@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal static class UnityClassIds
     {

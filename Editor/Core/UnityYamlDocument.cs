@@ -1,6 +1,6 @@
 using YamlDotNet.RepresentationModel;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal class UnityYamlDocument
     {

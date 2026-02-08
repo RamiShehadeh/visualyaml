@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     /// <summary>
     /// Resolves MonoBehaviour script GUIDs to human-readable class names.

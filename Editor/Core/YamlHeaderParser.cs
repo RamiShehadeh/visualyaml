@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal readonly struct DocumentHeader
     {

@@ -1,8 +1,8 @@
-# Visual YAML - Project Guide
+# AssetDiff - Project Guide
 
 ## What This Is
 
-A Unity Editor extension that visualizes diffs of Unity YAML-serialized assets (prefabs, scenes, materials, ScriptableObjects). Intended for teams using Git, where raw YAML diffs of `.prefab`/`.unity` files are unreadable.
+A Unity Editor extension that visualizes diffs of Unity serialized assets (prefabs, scenes, materials, ScriptableObjects). Intended for teams using Git, where raw diffs of `.prefab`/`.unity` files are unreadable.
 
 ## Target Platform
 
@@ -30,8 +30,8 @@ Editor/
   UI/
     DiffTreeView.cs       IMGUI TreeView rendering with search and context menu
   Windows/
-    VisualYamlWindow.cs   Main EditorWindow with resizable split panel
-  VisualYAML.Editor.asmdef  Editor-only assembly definition
+    AssetDiffWindow.cs    Main EditorWindow with resizable split panel
+  AssetDiff.Editor.asmdef  Editor-only assembly definition
 Plugins/
   YamlDotNet.dll        Third-party YAML parser (v11+, .NET Standard 2.1)
 Tests/
@@ -66,12 +66,12 @@ Tests/
 
 Open in Unity 2022.3 LTS. No build step needed — it's an Editor extension.
 
-- **Open tool:** Tools > Visual YAML > Diff Tool (in Unity menu bar)
+- **Open tool:** Tools > AssetDiff > Diff Tool (in Unity menu bar)
 - **Run tests:** Window > General > Test Runner > EditMode tab > Run All
 
 ## Coding Conventions
 
-- Namespace: `VisualYAML` for all types
+- Namespace: `AssetDiff` for all types
 - All Editor code in `Editor/` folder with Editor-only assembly definition
 - No `#if UNITY_EDITOR` guards needed (assembly definition handles platform restriction)
 - Use C# 9 features available in Unity 2022.3 (pattern matching, target-typed new)
@@ -89,5 +89,5 @@ Open in Unity 2022.3 LTS. No build step needed — it's an Editor extension.
 1. Get the raw YAML text from the problematic file
 2. Check if the document header has `stripped` — these are handled as placeholders
 3. Check for duplicate keys in the YAML body
-4. Check the Unity console for `[VisualYAML] YAML parse error` messages
+4. Check the Unity console for `[AssetDiff] YAML parse error` messages
 5. Try parsing the sanitized text with YamlDotNet in isolation

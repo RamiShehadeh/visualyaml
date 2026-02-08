@@ -1,6 +1,6 @@
 {
-    "name": "VisualYAML.Editor",
-    "rootNamespace": "VisualYAML",
+    "name": "AssetDiff.Editor",
+    "rootNamespace": "AssetDiff",
     "references": [],
     "includePlatforms": [
         "Editor"

@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal enum DiffTreeNodeKind { GameObject, Component, Field }
 

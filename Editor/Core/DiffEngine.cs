@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using YamlDotNet.RepresentationModel;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal static class DiffEngine
     {

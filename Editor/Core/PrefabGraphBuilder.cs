@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using YamlDotNet.RepresentationModel;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     internal static class PrefabGraphBuilder
     {

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace VisualYAML
+namespace AssetDiff
 {
     [Serializable]
     internal class AssetDiffEntry
