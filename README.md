@@ -2,8 +2,7 @@
 
 A Unity Editor extension that visualizes differences between serialized Unity assets — prefabs, scenes, materials, ScriptableObjects, and more. Built for teams using Git, where raw diffs of `.prefab` and `.unity` files are unreadable.
 
-![image](Screenshots/YAML-Diff-screen.png)
-![image](Screenshots/YAML-Diff-screen1.png)
+![image](Screenshots/WindowImage.png)
 
 ## Features
 
