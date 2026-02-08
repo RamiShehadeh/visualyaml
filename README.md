@@ -12,12 +12,6 @@ A Unity Editor extension that visualizes differences between serialized Unity as
 - **Full Asset Support:**
   Prefabs, scenes (`.unity`), materials (`.mat`), ScriptableObjects (`.asset`), and more.
 
-- **RectTransform & UI Support:**
-  Correctly handles UI hierarchies (Canvas, Panels, Buttons) with RectTransform (class 224).
-
-- **Nested Prefab Awareness:**
-  Handles `stripped` documents and PrefabInstance references from nested prefabs.
-
 - **Git Integration:**
   - Fetch changes from last commit, working tree, or staged files
   - Compare any asset to a previous commit
@@ -26,7 +20,7 @@ A Unity Editor extension that visualizes differences between serialized Unity as
 - **MonoBehaviour Script Resolution:**
   Resolves script GUIDs to actual class names (e.g., shows "PlayerController" instead of "MonoBehaviour").
 
-- **GUID Prettification:**
+- **User Friendly:**
   Replaces 32-character hex GUIDs with human-readable asset names.
 
 - **Search & Filter:**
@@ -66,6 +60,9 @@ The package includes `YamlDotNet.dll` in the Plugins folder. Ensure your project
 
 6. **Compare to Commit:**
    Select an asset, then click **Compare to Commit** to pick a specific commit from history.
+   
+7. **Compare to Branch:**
+   Select an asset, then click **Compare to Branch** to pick a specific Git branch to compare to.
 
 ## Requirements
 
@@ -80,3 +77,4 @@ MIT License. See [LICENSE.md](LICENSE.md) for details.
 ## Contributing
 
 Contributions, issues, and feature requests are welcome! Feel free to open an issue or submit a pull request.
+
