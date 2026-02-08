@@ -1,8 +1,8 @@
-# Visual YAML - Implementation Plan
+# AssetDiff - Implementation Plan
 
 ## Executive Summary
 
-Visual YAML is a Unity Editor tool that visualizes diffs of Unity YAML-serialized assets (prefabs, scenes, materials, ScriptableObjects). The current v0.0.2 implementation has a working prototype but suffers from critical gaps that make it unreliable for production use. This plan addresses every identified issue and lays out a phased approach to make the tool professional-grade, targeting **Unity 2022.3 LTS** as the primary platform.
+AssetDiff is a Unity Editor tool that visualizes diffs of Unity YAML-serialized assets (prefabs, scenes, materials, ScriptableObjects). The current v0.0.2 implementation has a working prototype but suffers from critical gaps that make it unreliable for production use. This plan addresses every identified issue and lays out a phased approach to make the tool professional-grade, targeting **Unity 2022.3 LTS** as the primary platform.
 
 ---
 
@@ -63,15 +63,15 @@ Editor/
     DiffTreeView.cs             # TreeView rendering
     Styles.cs                   # Shared colors, GUIStyles
   Windows/
-    VisualYamlWindow.cs         # Main EditorWindow (renamed for clarity)
-  VisualYAML.Editor.asmdef      # Proper assembly definition
+    AssetDiffWindow.cs         # Main EditorWindow (renamed for clarity)
+  AssetDiff.Editor.asmdef      # Proper assembly definition
 Tests/
   Editor/
     YamlHeaderParserTests.cs
     UnityYamlParserTests.cs
     DiffEngineTests.cs
     PrefabGraphBuilderTests.cs
-    VisualYAML.Tests.Editor.asmdef
+    AssetDiff.Tests.Editor.asmdef
 ```
 
 ---
@@ -87,18 +87,18 @@ Tests/
    - Update `"version"` to `"0.1.0"` (semver: new minor = breaking changes expected)
    - Add `"unityRelease": "0f1"` for minimum patch version
 
-2. **Fix assembly definition** (`ramis.visualyaml.Editor.asmdef`)
-   - Rename to `VisualYAML.Editor.asmdef`
-   - Set `"name": "VisualYAML.Editor"`
+2. **Fix assembly definition** (`ramis.assetdiff.Editor.asmdef`)
+   - Rename to `AssetDiff.Editor.asmdef`
+   - Set `"name": "AssetDiff.Editor"`
    - Add `"includePlatforms": ["Editor"]`
    - Add `"references": []` (empty, uses implicit UnityEditor/UnityEngine)
    - Add `"autoReferenced": true`
-   - Add `"rootNamespace": "VisualYAML"`
+   - Add `"rootNamespace": "AssetDiff"`
 
-3. **Move all public types into `VisualYAML` namespace**
+3. **Move all public types into `AssetDiff` namespace**
    - Currently `Models.cs` classes are in global namespace
    - Other files use `YamlPrefabDiff` namespace
-   - Unify everything under `VisualYAML`
+   - Unify everything under `AssetDiff`
 
 4. **Remove redundant `#if UNITY_EDITOR`** from all files (Editor asmdef handles this)
 
@@ -339,7 +339,7 @@ Tests/
 
 8. **Fix menu path**
    - README says `Window > YAML Prefab Diff` but code says `Tools/YAML Diff Tool`
-   - Standardize to `Tools/Visual YAML/Diff Tool`
+   - Standardize to `Tools/AssetDiff/Diff Tool`
 
 **Acceptance:** The UI feels polished and comparable to commercial Unity Editor extensions.
 
@@ -351,8 +351,8 @@ Tests/
 #### Tasks:
 
 1. **Create test assembly**
-   - `Tests/Editor/VisualYAML.Tests.Editor.asmdef`
-   - Reference `VisualYAML.Editor` assembly
+   - `Tests/Editor/AssetDiff.Tests.Editor.asmdef`
+   - Reference `AssetDiff.Editor` assembly
    - Use Unity Test Framework (NUnit)
 
 2. **YAML parser tests**

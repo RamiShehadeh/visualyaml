@@ -1,9 +1,10 @@
 {
-  "name": "com.ramis.visualyaml",
-  "version": "0.0.2",
-  "displayName": "Visual YAML",
-  "description": "YAML diff and visualization tool for Unity projects with Git integration",
-  "unity": "6000.0",
+  "name": "com.ramis.assetdiff",
+  "version": "1.0.0",
+  "displayName": "AssetDiff",
+  "description": "Asset diff visualization tool for Unity projects with Git integration. Visualizes changes in prefabs, scenes, materials, and other serialized assets.",
+  "unity": "2022.3",
+  "unityRelease": "0f1",
   "author": {
     "name": "Rami Shehadeh",
     "email": "ramishehadeh13@gmail.com",
@@ -13,6 +14,8 @@
     "yaml",
     "diff",
     "git",
-    "version-control"
+    "version-control",
+    "prefab",
+    "scene"
   ]
 }
