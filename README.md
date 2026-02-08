@@ -1,51 +1,78 @@
-# Visual YAML - Yaml Diff Tool for Unity
+# AssetDiff - Unity Asset Diff Tool
 
-A Unity Editor extension that makes it easy to visualize differences between YAML-serialized Unity assets (such as prefabs). The tool compares two versions of YAML files and highlights changes in a user-friendly interface, including clickable asset references.
+A Unity Editor extension that visualizes differences between serialized Unity assets — prefabs, scenes, materials, ScriptableObjects, and more. Built for teams using Git, where raw diffs of `.prefab` and `.unity` files are unreadable.
 
-![image](Screenshots/YAML-Diff-screen.png)
-![image](Screenshots/YAML-Diff-screen1.png)
-
+![image](Screenshots/WindowImage.png)
 
 ## Features
 
-- **YAML Diffing:**  
-  Compare YAML files (prefabs for now) to detect added, modified, or removed fields.
+- **Hierarchical YAML Diffing:**
+  Compare YAML files and see changes organized by GameObject > Component > Field, not raw text lines.
 
-- **Git Integration:**  
-  Retrieve diff information from Git commits (with a manual fallback for file selection).
+- **Full Asset Support:**
+  Prefabs, scenes (`.unity`), materials (`.mat`), ScriptableObjects (`.asset`), and more.
 
-- **Clickable Asset Links:**  
-  Automatically detect and replace GUIDs with the corresponding asset name. Clickable links will ping the asset in the Project window.
+- **Git Integration:**
+  - Fetch changes from last commit, working tree, or staged files
+  - Compare any asset to a previous commit
+  - Manual file comparison as fallback
 
-- **Custom Inspector Extension:**  
-  Highlights component changes directly in the Inspector by color-coding and grouping diff information.
+- **MonoBehaviour Script Resolution:**
+  Resolves script GUIDs to actual class names (e.g., shows "PlayerController" instead of "MonoBehaviour").
+
+- **User Friendly:**
+  Replaces 32-character hex GUIDs with human-readable asset names.
+
+- **Search & Filter:**
+  Type to filter changes by GameObject name, component type, field path, or value.
+
+- **Context Menu:**
+  Right-click any change to copy field paths or values.
 
 ## Installation
 
-1. **Clone Package**  
-   Copy this repository url and import it via Unity's Package Manager: Window -> Package Manager -> + -> install package from GIT url
+1. **Via Git URL (recommended):**
+   In Unity: Window > Package Manager > + > "Add package from git URL..."
+   Enter the repository URL.
 
-2. **Import YamlDotNet into your plugins folder if it is not already working (package already contains .dll for it):**  
-   Place the `YamlDotNet.dll` (compatible with your Unity version) into your `Assets/Plugins` folder.
+2. **Via Local Disk:**
+   Clone the repo, then in Unity: Window > Package Manager > + > "Add package from disk..."
+   Select the `package.json` file.
 
+The package includes `YamlDotNet.dll` in the Plugins folder. Ensure your project's API Compatibility Level is set to **.NET Standard 2.1** (Project Settings > Player > Api Compatibility Level).
 
 ## Usage
 
-1. **Open the Diff Tool Window:**  
-   In Unity, go to **Window → YAML Prefab Diff** to open the main diff window.
+1. **Open the Tool:**
+   In Unity, go to **Tools > AssetDiff > Diff Tool**.
 
-2. **Fetch Changed Assets:**  
-   - Click **Fetch Changed (Git Diff)** to automatically list changed YAML assets from your Git repository.
-   - Alternatively, use **Manual Diff** to compare any two YAML files.
+2. **Select Comparison Mode:**
+   Use the "Source" dropdown to choose: Last Commit, Working Tree, or Staged.
 
-3. **View Diff Results:**  
-   Clicking on an asset in the list opens a detailed diff view showing changes by YAML path, with clickable GUID links for asset references.
+3. **Fetch Changes:**
+   Click **Fetch Changes** to detect modified YAML assets from Git.
+
+4. **View Diffs:**
+   Select an asset on the left panel to see its hierarchical diff on the right.
+
+5. **Manual Comparison:**
+   Click **Manual Diff** to compare any two YAML files directly.
+
+6. **Compare to Commit:**
+   Select an asset, then click **Compare to Commit** to pick a specific commit from history.
+   
+7. **Compare to Branch:**
+   Select an asset, then click **Compare to Branch** to pick a specific Git branch to compare to.
 
 ## Requirements
 
-- **Unity:** 2021.3 or later (This was made in Unity 6000.0.30f1)
-- **YamlDotNet:** Ensure you have a compatible version of the YamlDotNet DLL in your project. Go to Project Settings -> Player -> Make sure Api Compatibility Level is the same as the .dll you used (I used 2.1)
-- **Git:** Required for Git diff functionality. Your Unity project must be a git repo for this to work.
+- **Unity:** 2022.3 LTS or later
+- **Git:** Required for Git integration. Your Unity project must be inside a Git repository.
+- **.NET Standard 2.1:** API Compatibility Level must be .NET Standard 2.1 (default in Unity 2022.3).
+
+## License
+
+MIT License. See [LICENSE.md](LICENSE.md) for details.
 
 ## Contributing
 
